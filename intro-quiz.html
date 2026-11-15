@@ -352,6 +352,25 @@
           </div>
         </div>
 
+        <!-- 3.5. 参加中のメンバー一覧 & キック管理 -->
+        <div class="bg-white/10 border border-white/15 rounded-2xl p-4 space-y-3 shadow-lg">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-indigo-300" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span class="text-xs font-bold text-slate-200">参加中のメンバー</span>
+            </div>
+            <span id="host-player-count" class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-indigo-500/25 text-indigo-200 border border-indigo-400/30">
+              0名
+            </span>
+          </div>
+
+          <div id="host-player-list" class="space-y-2 max-h-60 overflow-y-auto pr-0.5">
+            <p class="text-xs text-slate-400 text-center py-3">現在参加しているメンバーはいません</p>
+          </div>
+        </div>
+
         <!-- 4. 司会者用YouTubeモニター (16:9) -->
         <div class="bg-black/40 border border-white/10 rounded-2xl p-3 space-y-2">
           <span class="text-[11px] text-slate-400 block">
@@ -507,22 +526,48 @@
   </div>
 
   <!-- ======================================================================= -->
+  <!-- 4. 参加者キック確認モーダル                                              -->
+  <!-- ======================================================================= -->
+  <div id="kick-confirm-modal" class="hidden fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-rose-500/30 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center gap-2.5 text-rose-400">
+        <svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13 7a4 4 0 11-8 0 4 4 0 018 0zM9 14a6 6 0 00-6 6v1h12v-1a6 6 0 00-6-6zM21 12h-6" />
+        </svg>
+        <h2 class="text-base font-black">参加者のキック確認</h2>
+      </div>
+      <p id="kick-confirm-message" class="text-xs sm:text-sm text-slate-200 leading-relaxed">
+        この参加者をクイズから退室させますか？
+      </p>
+      <div class="flex gap-2 justify-end pt-1">
+        <button
+          id="cancel-kick-btn"
+          type="button"
+          class="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold transition"
+        >
+          キャンセル
+        </button>
+        <button
+          id="confirm-kick-btn"
+          type="button"
+          class="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-lg shadow-rose-600/30 transition active:scale-95"
+        >
+          退室させる（キック）
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
   <!-- アプリケーションロジック (ES Modules / Google公式Firebase SDK v10.8.0)    -->
   <!-- ======================================================================= -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-    import { getFirestore, doc, setDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    import { getFirestore, doc, setDoc, updateDoc, deleteField, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
     // =========================================================================
-    // 0. file:// プロトコル警告表示
-    // =========================================================================
-    if (window.location.protocol === "file:") {
-      document.getElementById("file-protocol-warning")?.classList.remove("hidden");
-    }
-
-    // =========================================================================
-    // 1. Firebase 初期設定と接続初期化
+    // 1. Firebase 設定 & 初期化
     // =========================================================================
     const DEFAULT_FIREBASE_CONFIG = {
       apiKey: "AIzaSyDWXDyZkXr5exbZuqwKGF5jeTCSeRGn37A",
@@ -536,6 +581,11 @@
 
     const ROOM_COLLECTION = "intro_quiz";
     const ROOM_DOC_ID = "main-intro-room";
+
+    // file:// プロトコル検出
+    if (window.location.protocol === "file:") {
+      document.getElementById("file-protocol-warning")?.classList.remove("hidden");
+    }
 
     function getActiveFirebaseConfig() {
       try {
@@ -892,7 +942,8 @@
       buzzerUserId: null,
       wrongUsers: [],
       revealAnswer: false,
-      soundEffect: null
+      soundEffect: null,
+      players: {}
     };
 
     let currentRole = null; // 'host' | 'player'
@@ -909,8 +960,10 @@
     let gameState = { ...INITIAL_STATE };
     let lastSoundTs = Date.now();
     let audioUnlocked = false;
+    let isRegisteredInRoom = false;
+    let pendingKickTarget = null;
 
-    function loadSavedVolume(storageKey, fallback = 80) {
+    function loadSavedVolume(storageKey, fallback) {
       try {
         const raw = localStorage.getItem(storageKey);
         if (raw !== null && raw !== "") {
@@ -1022,7 +1075,26 @@
     // 7. Firestore & フォールバック状態同期
     // =========================================================================
     function applyIncomingState(nextData) {
-      gameState = { ...INITIAL_STATE, ...nextData };
+      gameState = {
+        ...INITIAL_STATE,
+        ...nextData,
+        players: (nextData && typeof nextData.players === "object" && nextData.players !== null)
+          ? nextData.players
+          : {}
+      };
+
+      // 参加者として入室中の場合、自分の登録状態とキック検知を行う
+      if (currentRole === "player") {
+        const isPresent = Boolean(gameState.players && gameState.players[playerId]);
+        if (isPresent) {
+          isRegisteredInRoom = true;
+        } else if (isRegisteredInRoom) {
+          // 一度登録された後に一覧から消えた場合は司会者によるキックとみなす
+          leaveRole(true);
+          showToast("司会者によって退室させられました", "error");
+          return;
+        }
+      }
 
       // 入室後に新しく発生した効果音のみ鳴らす
       if (gameState.soundEffect && gameState.soundEffect.ts > lastSoundTs) {
@@ -1051,6 +1123,47 @@
           bc.postMessage(nextState);
           bc.close();
         } catch (e) {}
+      }
+    }
+
+    async function registerPlayerInRoom(id, name) {
+      const playerEntry = {
+        id,
+        name,
+        joinedAt: Date.now()
+      };
+      if (useFirebaseRealtime && db) {
+        try {
+          const docRef = doc(db, ROOM_COLLECTION, ROOM_DOC_ID);
+          await setDoc(docRef, { players: { [id]: playerEntry } }, { merge: true });
+        } catch (err) {
+          console.error("Register player error:", err);
+        }
+      } else {
+        const nextPlayers = { ...(gameState.players || {}), [id]: playerEntry };
+        await updateGameState({ players: nextPlayers });
+      }
+    }
+
+    async function removePlayerFromRoom(targetId, extraPatch = {}) {
+      if (useFirebaseRealtime && db) {
+        try {
+          const docRef = doc(db, ROOM_COLLECTION, ROOM_DOC_ID);
+          await updateDoc(docRef, {
+            [`players.${targetId}`]: deleteField(),
+            ...extraPatch
+          });
+        } catch (err) {
+          console.error("Remove player error:", err);
+          // 万が一ドキュメント未作成などでupdateDocが失敗した場合はsetDocでフォールバック
+          const nextPlayers = { ...(gameState.players || {}) };
+          delete nextPlayers[targetId];
+          await updateGameState({ players: nextPlayers, ...extraPatch });
+        }
+      } else {
+        const nextPlayers = { ...(gameState.players || {}) };
+        delete nextPlayers[targetId];
+        await updateGameState({ players: nextPlayers, ...extraPatch });
       }
     }
 
@@ -1114,6 +1227,7 @@
     function enterRole(role) {
       getAudioContext();
       currentRole = role;
+      isRegisteredInRoom = false;
 
       document.getElementById("entry-screen").classList.add("hidden");
       document.getElementById("app-screen").classList.remove("hidden");
@@ -1132,13 +1246,18 @@
         playerView.classList.remove("hidden");
         hostView.classList.add("hidden");
         updateVolumeUI("player");
+        registerPlayerInRoom(playerId, playerName);
       }
 
       renderCurrentRoleView();
     }
 
-    function leaveRole() {
+    function leaveRole(wasKicked = false) {
+      if (!wasKicked && currentRole === "player") {
+        removePlayerFromRoom(playerId);
+      }
       currentRole = null;
+      isRegisteredInRoom = false;
       hostPlayerManager.destroy();
       participantPlayerManager.destroy();
 
@@ -1195,6 +1314,51 @@
         clearWrongBtn.textContent = `お手つき解除 (${wrongCount})`;
       } else {
         clearWrongBtn.classList.add("hidden");
+      }
+
+      // 参加中メンバー一覧の描画
+      const playersMap = gameState.players || {};
+      const playerList = Object.values(playersMap)
+        .filter((p) => p && p.id && p.name)
+        .sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+
+      const countEl = document.getElementById("host-player-count");
+      const listEl = document.getElementById("host-player-list");
+      if (countEl) {
+        countEl.textContent = `${playerList.length}名`;
+      }
+      if (listEl) {
+        if (playerList.length === 0) {
+          listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-3">現在参加しているメンバーはいません</p>`;
+        } else {
+          const wrongSet = new Set(gameState.wrongUsers || []);
+          listEl.innerHTML = playerList.map((p) => {
+            const isBuzzing = gameState.buzzerUserId === p.id;
+            const isWrong = wrongSet.has(p.id);
+            let statusBadge = `<span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-bold">参加中</span>`;
+            if (isBuzzing) {
+              statusBadge = `<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black animate-pulse">🎤 回答中</span>`;
+            } else if (isWrong) {
+              statusBadge = `<span class="text-[11px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-bold">❌ お手つき</span>`;
+            }
+            return `
+              <div class="flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-slate-950/75 border ${isBuzzing ? "border-amber-400/70" : "border-white/10"}">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="font-bold text-sm text-white truncate">${escapeHtml(p.name)}</span>
+                  ${statusBadge}
+                </div>
+                <button
+                  type="button"
+                  data-kick-id="${escapeHtml(p.id)}"
+                  data-kick-name="${escapeHtml(p.name)}"
+                  class="kick-player-btn shrink-0 px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-600 border border-rose-500/35 text-rose-200 hover:text-white text-xs font-bold transition active:scale-95"
+                >
+                  キック
+                </button>
+              </div>
+            `;
+          }).join("");
+        }
       }
 
       // 司会者側YouTubeプレーヤー同期
@@ -1447,6 +1611,47 @@
     document.getElementById("host-clear-wrong-btn").addEventListener("click", async () => {
       await updateGameState({ wrongUsers: [] });
       showToast("お手つきを解除しました", "info");
+    });
+
+    // 司会者：参加者一覧からのキック確認モーダル起動（イベント委譲）
+    const kickModal = document.getElementById("kick-confirm-modal");
+    document.getElementById("host-player-list").addEventListener("click", (e) => {
+      const btn = e.target.closest(".kick-player-btn");
+      if (!btn) return;
+      const targetId = btn.getAttribute("data-kick-id");
+      const targetName = btn.getAttribute("data-kick-name");
+      if (!targetId) return;
+
+      pendingKickTarget = { id: targetId, name: targetName || "参加者" };
+      document.getElementById("kick-confirm-message").textContent =
+        `「${pendingKickTarget.name}」さんをクイズから強制退室（キック）させますか？`;
+      kickModal.classList.remove("hidden");
+    });
+
+    document.getElementById("cancel-kick-btn").addEventListener("click", () => {
+      pendingKickTarget = null;
+      kickModal.classList.add("hidden");
+    });
+
+    document.getElementById("confirm-kick-btn").addEventListener("click", async () => {
+      if (!pendingKickTarget) return;
+      const { id: targetId, name: targetName } = pendingKickTarget;
+      pendingKickTarget = null;
+      kickModal.classList.add("hidden");
+
+      const extraPatch = {};
+      // キック対象がちょうど回答中だった場合は回答ロックも解除する
+      if (gameState.buzzerUserId === targetId) {
+        extraPatch.buzzerUser = null;
+        extraPatch.buzzerUserId = null;
+      }
+      // お手つきリストに含まれていれば除外する
+      if ((gameState.wrongUsers || []).includes(targetId)) {
+        extraPatch.wrongUsers = (gameState.wrongUsers || []).filter((uid) => uid !== targetId);
+      }
+
+      await removePlayerFromRoom(targetId, extraPatch);
+      showToast(`「${targetName}」さんを退室させました`, "info");
     });
 
     // 司会者：個別音量スライダー & ミュート切替
