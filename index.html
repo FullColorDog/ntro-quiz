@@ -3,43 +3,443 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>イントロクイズ大会</title>
-  <!-- Tailwind CSS -->
+  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Babel for JSX -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Google Fonts: Inter & Noto Sans JP -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;700;900&family=Noto+Sans+JP:wght@500;700;900&display=swap" rel="stylesheet" />
   <!-- YouTube IFrame Player API -->
   <script src="https://www.youtube.com/iframe_api"></script>
-  <!-- ESM Import Maps -->
-  <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@18.2.0",
-        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-        "firebase/app": "https://esm.sh/firebase@10.8.0/app",
-        "firebase/auth": "https://esm.sh/firebase@10.8.0/auth",
-        "firebase/firestore": "https://esm.sh/firebase@10.8.0/firestore",
-        "lucide-react": "https://esm.sh/lucide-react@0.263.1?external=react"
-      }
+  <style>
+    body {
+      font-family: 'Inter', 'Noto Sans JP', sans-serif;
+      -webkit-tap-highlight-color: transparent;
     }
-  </script>
+    .yt-container iframe {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border: 0;
+    }
+  </style>
 </head>
-<body class="bg-slate-950 text-white min-h-screen">
-  <div id="root"></div>
+<body class="bg-slate-950 text-white min-h-screen selection:bg-indigo-500 selection:text-white">
 
-  <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useRef } from 'react';
-    import { createRoot } from 'react-dom/client';
-    import { initializeApp } from 'firebase/app';
-    import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-    import { getFirestore, doc, setDoc, onSnapshot, runTransaction } from 'firebase/firestore';
-    import {
-      Music, Mic, Users, Play, Pause, RotateCcw, Bell,
-      CheckCircle2, XCircle, Eye, Volume2, LogOut, Link as LinkIcon, Settings
-    } from 'lucide-react';
+  <!-- ローカルファイル (file://) 起動時の警告バナー -->
+  <div id="file-protocol-warning" class="hidden bg-amber-500 text-slate-950 px-4 py-3 text-xs sm:text-sm font-bold text-center shadow-lg z-40 relative">
+    ⚠️ ローカルファイルを直接開いているためYouTubeが再生ブロックされる場合があります。GitHub PagesのURL（https://...）から開いてください。
+  </div>
+
+  <!-- トースト通知（alertの代替メッセージボックス） -->
+  <div id="toast-container" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col items-center gap-2 w-full max-w-sm px-4"></div>
+
+  <!-- ======================================================================= -->
+  <!-- 1. 入室画面 (EntryScreen)                                                 -->
+  <!-- ======================================================================= -->
+  <div id="entry-screen" class="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950 flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-white/10 backdrop-blur-xl border border-white/15 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+      <!-- タイトルロゴ -->
+      <div class="text-center space-y-2">
+        <div class="w-16 h-16 bg-gradient-to-tr from-indigo-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-indigo-500/30">
+          <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+          </svg>
+        </div>
+        <h1 class="text-2xl sm:text-3xl font-black tracking-wide">イントロクイズ</h1>
+        <p class="text-xs sm:text-sm text-indigo-200">
+          通話しながら楽しめる早押し音楽クイズ
+        </p>
+      </div>
+
+      <!-- 参加者として入室フォーム -->
+      <form id="player-entry-form" class="bg-slate-900/60 border border-white/10 rounded-2xl p-5 space-y-4">
+        <div class="flex items-center gap-2 text-indigo-300 font-bold text-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          <span>参加者として入る</span>
+        </div>
+        <div>
+          <input
+            id="player-name-input"
+            type="text"
+            required
+            maxlength="15"
+            placeholder="あなたの名前（ニックネーム）"
+            class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-white/15 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 transition"
+          />
+        </div>
+        <button
+          id="join-player-btn"
+          type="submit"
+          class="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 font-bold text-base shadow-lg shadow-indigo-600/30 transition active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+        >
+          クイズに参加する
+        </button>
+      </form>
+
+      <!-- 区切り線 -->
+      <div class="relative flex items-center justify-center">
+        <div class="w-full border-t border-white/10"></div>
+        <span class="px-3 text-xs text-slate-400 shrink-0">または</span>
+        <div class="w-full border-t border-white/10"></div>
+      </div>
+
+      <!-- 司会者として入室ボタン（パスワード不要） -->
+      <button
+        id="join-host-btn"
+        type="button"
+        class="w-full py-3.5 px-4 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 flex items-center justify-center gap-2.5 font-bold text-slate-100 transition active:scale-95"
+      >
+        <svg class="w-5 h-5 text-pink-400" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+        </svg>
+        <span>司会者として入る（出題する）</span>
+      </button>
+
+      <!-- Firebase接続ステータス & 設定モーダルボタン -->
+      <div class="pt-1 text-center space-y-2">
+        <div id="firebase-status-text" class="text-[11px] text-amber-300 font-medium break-words">
+          🟡 Firebaseに接続中...
+        </div>
+        <button
+          id="open-config-btn"
+          type="button"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 hover:text-white transition"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          <span>Firebase設定を変更</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- 2. メインゲーム画面 (司会者 / 参加者 共通シェル)                            -->
+  <!-- ======================================================================= -->
+  <div id="app-screen" class="hidden min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950 flex flex-col">
+    <!-- ヘッダー -->
+    <header class="px-4 py-3 bg-black/40 border-b border-white/10 flex items-center justify-between sticky top-0 z-20 backdrop-blur-md">
+      <div class="flex items-center gap-2.5">
+        <div class="p-2 bg-indigo-600 rounded-xl shadow">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="font-bold text-base sm:text-lg leading-tight">イントロクイズ</h1>
+          <span id="header-role-label" class="text-[11px] text-indigo-300"></span>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <span id="header-conn-badge" class="hidden sm:inline-block text-[11px] px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-300"></span>
+        <button
+          id="leave-room-btn"
+          type="button"
+          class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold transition active:scale-95"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          <span>退出</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- メインコンテンツ領域 -->
+    <main class="flex-1 max-w-2xl w-full mx-auto p-4 sm:p-6 flex flex-col gap-5">
+
+      <!-- =================================================================== -->
+      <!-- 2-A. 司会者画面 (HostView)                                           -->
+      <!-- =================================================================== -->
+      <div id="host-view" class="hidden space-y-5">
+        <!-- 1. YouTube URL 入力フォーム -->
+        <form id="host-url-form" class="bg-white/10 border border-white/15 rounded-2xl p-4 space-y-3 shadow-lg">
+          <label for="host-url-input" class="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            <span>出題するYouTubeのURL（または11桁の動画ID）を貼り付け</span>
+          </label>
+          <div class="flex gap-2">
+            <input
+              id="host-url-input"
+              type="text"
+              placeholder="https://www.youtube.com/watch?v=..."
+              class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-pink-400 transition"
+            />
+            <button
+              type="submit"
+              class="px-5 py-2.5 rounded-xl bg-pink-600 hover:bg-pink-500 font-bold text-sm shrink-0 shadow transition active:scale-95"
+            >
+              セット
+            </button>
+          </div>
+        </form>
+
+        <!-- 2. 回答者アラートバナー（誰かが早押しした時のみ表示） -->
+        <div id="host-buzzer-alert" class="hidden bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 rounded-2xl p-5 shadow-xl space-y-4">
+          <div class="text-center">
+            <span class="text-xs font-black uppercase tracking-widest bg-black/25 text-white px-3 py-1 rounded-full">
+              回答権獲得！
+            </span>
+            <div id="host-buzzer-name" class="text-3xl sm:text-4xl font-black mt-2 text-white drop-shadow">
+              🎤 〇〇 さん
+            </div>
+            <p class="text-xs font-bold text-amber-100 mt-1">
+              通話で口頭回答を聞いて判定してください
+            </p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <button
+              id="host-correct-btn"
+              type="button"
+              class="py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
+            >
+              <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>正解！（答え公開）</span>
+            </button>
+            <button
+              id="host-wrong-btn"
+              type="button"
+              class="py-3.5 rounded-xl bg-rose-700 hover:bg-rose-600 text-white font-black text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
+            >
+              <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>不正解（続行）</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 3. 音楽コントロールパネル -->
+        <div class="bg-white/10 border border-white/15 rounded-2xl p-4 space-y-4 shadow-lg">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-300">音楽コントロール（参加者と同期）</span>
+            <span id="host-play-status-badge" class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-slate-700 text-slate-300">
+              ⏸ 停止中
+            </span>
+          </div>
+
+          <div class="grid grid-cols-3 gap-2.5">
+            <button
+              id="host-play-btn"
+              type="button"
+              disabled
+              class="py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none font-bold flex flex-col items-center justify-center gap-1 shadow transition active:scale-95"
+            >
+              <svg class="w-6 h-6 fill-current" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              <span class="text-xs">再生</span>
+            </button>
+
+            <button
+              id="host-pause-btn"
+              type="button"
+              disabled
+              class="py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:pointer-events-none font-bold flex flex-col items-center justify-center gap-1 shadow transition active:scale-95"
+            >
+              <svg class="w-6 h-6 fill-current" viewBox="0 0 24 24">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+              </svg>
+              <span class="text-xs">ストップ</span>
+            </button>
+
+            <button
+              id="host-restart-btn"
+              type="button"
+              disabled
+              class="py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:pointer-events-none font-bold flex flex-col items-center justify-center gap-1 shadow transition active:scale-95"
+            >
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span class="text-xs">最初から再生</span>
+            </button>
+          </div>
+
+          <!-- 答え公開トグル & お手つき解除 -->
+          <div class="flex flex-wrap gap-2 pt-1">
+            <button
+              id="host-reveal-btn"
+              type="button"
+              disabled
+              class="flex-1 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-40 disabled:pointer-events-none text-xs font-bold flex items-center justify-center gap-1.5 transition"
+            >
+              <svg class="w-4 h-4 text-pink-400" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              <span id="host-reveal-btn-text">答え（動画）を全員に表示</span>
+            </button>
+
+            <button
+              id="host-clear-wrong-btn"
+              type="button"
+              class="hidden py-2.5 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 text-xs font-bold transition"
+            >
+              お手つき解除 (0)
+            </button>
+          </div>
+        </div>
+
+        <!-- 4. 司会者用YouTubeモニター (16:9) -->
+        <div class="bg-black/40 border border-white/10 rounded-2xl p-3 space-y-2">
+          <span class="text-[11px] text-slate-400 block">
+            司会者用モニター（参加者には答え公開まで映像は見えません）
+          </span>
+          <!-- 司会者側YouTubeエラーメッセージ表示枠 -->
+          <div id="host-yt-error-box" class="hidden p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs leading-relaxed"></div>
+          <div class="relative rounded-xl overflow-hidden bg-black aspect-video">
+            <!-- 未セット時の案内プレースホルダー -->
+            <div id="host-yt-placeholder" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400 p-4 text-center">
+              <svg class="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span class="text-xs font-bold">上のフォームからYouTubeのURLをセットしてください</span>
+            </div>
+            <!-- 動的iframe挿入先 -->
+            <div id="host-yt-container" class="yt-container w-full h-full"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =================================================================== -->
+      <!-- 2-B. 参加者画面 (PlayerView)                                         -->
+      <!-- =================================================================== -->
+      <div id="player-view" class="hidden flex-1 flex flex-col justify-between gap-5">
+        <!-- スマホ用 音声有効化バナー -->
+        <button
+          id="player-unlock-audio-btn"
+          type="button"
+          class="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-3 animate-bounce transition active:scale-95"
+        >
+          <svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          </svg>
+          <span>タップして音声を有効にする（必須）</span>
+        </button>
+
+        <!-- 現在の状況表示カード -->
+        <div id="player-status-card" class="bg-white/10 border border-white/15 rounded-3xl p-5 text-center space-y-2 shadow-lg">
+          <div class="py-3 space-y-1">
+            <p class="text-lg font-bold text-slate-200">司会者の出題待ち...</p>
+            <p class="text-xs text-slate-400">曲がセットされるまでそのままお待ちください</p>
+          </div>
+        </div>
+
+        <!-- 中央の巨大円形早押しボタン -->
+        <div class="flex-1 flex items-center justify-center py-2">
+          <button
+            id="player-buzz-btn"
+            type="button"
+            disabled
+            class="w-60 h-60 sm:w-72 sm:h-72 rounded-full font-black text-2xl sm:text-3xl tracking-wider flex flex-col items-center justify-center gap-2 transition-all select-none bg-slate-800/60 text-slate-500 border-4 border-slate-700 cursor-not-allowed"
+          >
+            <svg class="w-12 h-12" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            <span id="player-buzz-label">待機中</span>
+          </button>
+        </div>
+
+        <!-- ネタバレ防止YouTubeプレーヤー（16:9通常サイズを維持し、カバーで映像を隠す） -->
+        <div class="bg-white/10 border border-white/15 rounded-2xl p-3 space-y-2">
+          <div id="player-video-header" class="text-center text-xs font-bold text-amber-300">
+            🙈 答え公開まで映像は隠れています
+          </div>
+          <!-- 参加者側YouTubeエラーメッセージ表示枠 -->
+          <div id="player-yt-error-box" class="hidden p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs leading-relaxed"></div>
+          <div class="relative rounded-xl overflow-hidden bg-black aspect-video">
+            <div id="player-yt-wrapper" class="yt-container w-full h-full pointer-events-none">
+              <!-- 動的iframe挿入先 -->
+            </div>
+            <!-- 映像隠しカバー（SECRET TRACK） -->
+            <div id="player-secret-cover" class="absolute inset-0 z-10 bg-slate-900 flex flex-col items-center justify-center gap-2 text-slate-400 select-none">
+              <svg class="w-10 h-10 text-indigo-400/70" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+              </svg>
+              <span class="text-xs font-bold tracking-widest text-indigo-200/80">SECRET TRACK</span>
+              <span class="text-[11px] text-slate-400">答え公開まで映像は隠れています</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- 3. Firebase設定変更モーダル                                              -->
+  <!-- ======================================================================= -->
+  <div id="config-modal" class="hidden fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-white/15 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+      <h2 class="text-lg font-bold">オンライン同期（Firebase）設定</h2>
+      <p class="text-xs text-slate-300 leading-relaxed">
+        別のFirebaseプロジェクトを使用したい場合は、<code class="text-indigo-300">firebaseConfig</code> オブジェクトを貼り付けて保存してください。
+      </p>
+      <textarea
+        id="config-textarea"
+        rows="6"
+        placeholder='{\n  apiKey: "AIzaSy...",\n  authDomain: "...",\n  projectId: "...",\n  ...\n}'
+        class="w-full p-3 rounded-xl bg-slate-950 border border-white/15 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-400"
+      ></textarea>
+      <div class="flex flex-wrap gap-2 justify-between items-center pt-1">
+        <button
+          id="reset-config-btn"
+          type="button"
+          class="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-200 text-xs font-bold transition"
+        >
+          初期設定に戻す
+        </button>
+        <div class="flex gap-2">
+          <button
+            id="close-config-btn"
+            type="button"
+            class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold transition"
+          >
+            閉じる
+          </button>
+          <button
+            id="save-config-btn"
+            type="button"
+            class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold transition"
+          >
+            保存して再読み込み
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- アプリケーションロジック (ES Modules / Google公式Firebase SDK v10.8.0)    -->
+  <!-- ======================================================================= -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { getFirestore, doc, setDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
     // =========================================================================
-    // Firebase設定（設定済み）
+    // 0. file:// プロトコル警告表示
+    // =========================================================================
+    if (window.location.protocol === "file:") {
+      document.getElementById("file-protocol-warning")?.classList.remove("hidden");
+    }
+
+    // =========================================================================
+    // 1. Firebase 初期設定と接続初期化
     // =========================================================================
     const DEFAULT_FIREBASE_CONFIG = {
       apiKey: "AIzaSyDWXDyZkXr5exbZuqwKGF5jeTCSeRGn37A",
@@ -51,45 +451,93 @@
       measurementId: "G-H4YS9Z26KB"
     };
 
-    const getFirebaseConfig = () => {
+    const ROOM_COLLECTION = "intro_quiz";
+    const ROOM_DOC_ID = "main-intro-room";
+
+    function getActiveFirebaseConfig() {
       try {
-        const saved = localStorage.getItem('intro_quiz_firebase_config');
-        if (saved) return JSON.parse(saved);
-      } catch (e) {}
+        const saved = localStorage.getItem("intro_quiz_firebase_config");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.apiKey && parsed.projectId) {
+            return parsed;
+          }
+        }
+      } catch (e) {
+        console.warn("Saved config parse error:", e);
+      }
       return DEFAULT_FIREBASE_CONFIG;
-    };
-
-    const firebaseConfig = getFirebaseConfig();
-    const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY";
-
-    let app = null;
-    let auth = null;
-    let db = null;
-    if (isFirebaseConfigured) {
-      app = initializeApp(firebaseConfig);
-      auth = getAuth(app);
-      db = getFirestore(app);
     }
 
-    const ROOM_ID = "main-intro-room";
+    const firebaseConfig = getActiveFirebaseConfig();
+    let firebaseApp = null;
+    let auth = null;
+    let db = null;
+    let useFirebaseRealtime = false;
+
+    const statusTextEl = document.getElementById("firebase-status-text");
+    const headerConnBadgeEl = document.getElementById("header-conn-badge");
+
+    function setConnectionStatus(statusType, message) {
+      statusTextEl.textContent = message;
+      headerConnBadgeEl.textContent = message;
+      statusTextEl.className = "text-[11px] font-medium break-words " + (
+        statusType === "connected" ? "text-emerald-400" :
+        statusType === "error" ? "text-rose-300" : "text-amber-300"
+      );
+    }
 
     // =========================================================================
-    // 効果音ジェネレーター (Web Audio API)
+    // 2. トースト通知ヘルパー (alert不使用)
     // =========================================================================
-    const playSound = (type) => {
+    function showToast(message, variant = "info") {
+      const container = document.getElementById("toast-container");
+      const toast = document.createElement("div");
+      const colors = {
+        info: "bg-slate-800/95 border-white/15 text-white",
+        success: "bg-emerald-600/95 border-emerald-400/40 text-white",
+        error: "bg-rose-600/95 border-rose-400/40 text-white"
+      };
+      toast.className = `px-4 py-3 rounded-2xl border shadow-xl text-xs sm:text-sm font-bold text-center backdrop-blur-md transition-all duration-300 ${colors[variant] || colors.info}`;
+      toast.textContent = message;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = "0";
+        toast.style.transform = "translateY(-8px)";
+        setTimeout(() => toast.remove(), 300);
+      }, 2800);
+    }
+
+    // =========================================================================
+    // 3. Web Audio API シングルトン効果音エンジン
+    // =========================================================================
+    let sharedAudioCtx = null;
+
+    function getAudioContext() {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return null;
+      if (!sharedAudioCtx || sharedAudioCtx.state === "closed") {
+        sharedAudioCtx = new AudioCtx();
+      }
+      if (sharedAudioCtx.state === "suspended") {
+        sharedAudioCtx.resume().catch(() => {});
+      }
+      return sharedAudioCtx;
+    }
+
+    function playSound(type) {
       try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        const ctx = new AudioCtx();
-        if (ctx.state === 'suspended') ctx.resume();
-
+        const ctx = getAudioContext();
+        if (!ctx) return;
         const now = ctx.currentTime;
 
-        if (type === 'buzz') {
+        if (type === "buzz") {
           // 早押し音「ピコーン！」
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(1046.5, now); // C6
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(1046.5, now);        // C6
           osc.frequency.setValueAtTime(1567.98, now + 0.08); // G6
           gain.gain.setValueAtTime(0.3, now);
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
@@ -97,27 +545,28 @@
           gain.connect(ctx.destination);
           osc.start(now);
           osc.stop(now + 0.6);
-        } else if (type === 'correct') {
+        } else if (type === "correct") {
           // 正解音「ピンポンピンポン♪」
           const notes = [659.25, 523.25, 659.25, 523.25]; // E5, C5, E5, C5
           notes.forEach((freq, idx) => {
+            const startTime = now + (idx * 0.14);
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(freq, now + idx * 0.14);
-            gain.gain.setValueAtTime(0.25, now + idx * 0.14);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.14 + 0.35);
+            osc.type = "triangle";
+            osc.frequency.setValueAtTime(freq, startTime);
+            gain.gain.setValueAtTime(0.25, startTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
             osc.connect(gain);
             gain.connect(ctx.destination);
-            osc.start(now + idx * 0.14);
-            osc.stop(now + idx * 0.14 + 0.35);
+            osc.start(startTime);
+            osc.stop(startTime + 0.35);
           });
-        } else if (type === 'wrong') {
+        } else if (type === "wrong") {
           // 不正解音「ブブーッ！」
           [0, 0.22].forEach((offset) => {
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
-            osc.type = 'sawtooth';
+            osc.type = "sawtooth";
             osc.frequency.setValueAtTime(130.81, now + offset); // C3
             gain.gain.setValueAtTime(0.22, now + offset);
             gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.18);
@@ -130,18 +579,198 @@
       } catch (e) {
         console.warn("Audio playback skipped:", e);
       }
-    };
+    }
 
-    // YouTube URLから動画IDを抽出
-    const extractYouTubeId = (url) => {
+    // =========================================================================
+    // 4. YouTube URL / 動画ID抽出ヘルパー
+    // =========================================================================
+    function extractYouTubeId(url) {
       if (!url) return null;
-      const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
-      const match = url.match(regExp);
-      return match ? match[1] : (url.length === 11 ? url : null);
-    };
+      const trimmed = url.trim();
+      if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+        return trimmed;
+      }
+      const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts|live)\/|.*[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+      const match = trimmed.match(regExp);
+      return match ? match[1] : null;
+    }
 
+    // =========================================================================
+    // 5. YouTube Player 動的生成・安全管理マネージャ（エラー153完全対策）
+    // =========================================================================
+    function whenYouTubeReady(callback) {
+      if (window.YT && window.YT.Player) {
+        callback();
+        return;
+      }
+      const prevCallback = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        if (typeof prevCallback === "function") prevCallback();
+        callback();
+      };
+      const poll = setInterval(() => {
+        if (window.YT && window.YT.Player) {
+          clearInterval(poll);
+          callback();
+        }
+      }, 150);
+    }
+
+    function formatYouTubeErrorMessage(code) {
+      if (code === 153) {
+        return "⚠️ YouTubeエラー 153（リファラー/埋め込み制限エラー）：ブラウザのリファラー送信制限、または公開URLの環境要因により再生がブロックされています。HTTPSの公開ページからアクセスしているか確認してください。";
+      }
+      if (code === 101 || code === 150) {
+        return "⚠️ YouTubeエラー " + code + "：この動画は投稿者によって外部サイトでの埋め込み再生が禁止されています。別の動画URLをセットしてください。";
+      }
+      if (code === 100) {
+        return "⚠️ YouTubeエラー 100：指定された動画が見つからないか、非公開・削除されています。";
+      }
+      return "⚠️ YouTube再生エラー（コード: " + code + "）：別の動画URLでお試しください。";
+    }
+
+    function createManagedYouTubePlayer({ containerId, isHost, errorBoxId, placeholderId, onReadyHook }) {
+      let ytInstance = null;
+      let isReady = false;
+      let activeVideoId = "";
+      let lastActionTs = 0;
+
+      function clearError() {
+        const errBox = document.getElementById(errorBoxId);
+        if (errBox) {
+          errBox.classList.add("hidden");
+          errBox.textContent = "";
+        }
+      }
+
+      function showError(code) {
+        const errBox = document.getElementById(errorBoxId);
+        if (errBox) {
+          errBox.textContent = formatYouTubeErrorMessage(code);
+          errBox.classList.remove("hidden");
+        }
+      }
+
+      function destroy() {
+        if (ytInstance) {
+          try {
+            ytInstance.destroy();
+          } catch (e) {}
+          ytInstance = null;
+        }
+        isReady = false;
+        activeVideoId = "";
+        lastActionTs = 0;
+        clearError();
+        const container = document.getElementById(containerId);
+        if (container) {
+          container.innerHTML = "";
+        }
+        if (placeholderId) {
+          document.getElementById(placeholderId)?.classList.remove("hidden");
+        }
+      }
+
+      function sync(state, options = {}) {
+        const videoId = (state.videoId || "").trim();
+
+        // 有効な11文字の videoId でない場合は絶対に初期化せず破棄して待機表示にする
+        if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+          destroy();
+          return;
+        }
+
+        if (placeholderId) {
+          document.getElementById(placeholderId)?.classList.add("hidden");
+        }
+
+        // 新しい曲に切り替わった、または未初期化の場合は既存を破棄して動的<iframe>から新規構築
+        if (activeVideoId !== videoId || !ytInstance) {
+          destroy();
+          if (placeholderId) {
+            document.getElementById(placeholderId)?.classList.add("hidden");
+          }
+          activeVideoId = videoId;
+          lastActionTs = state.actionTimestamp || 0;
+
+          whenYouTubeReady(() => {
+            // 非同期ロード待ちの間に曲がクリアされたりロール退出した場合は中断
+            if (activeVideoId !== videoId) return;
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            container.innerHTML = "";
+            const iframe = document.createElement("iframe");
+            iframe.id = `${containerId}-iframe-${Date.now()}`;
+            iframe.className = "w-full h-full block border-0";
+            iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+            iframe.referrerPolicy = "strict-origin-when-cross-origin";
+            iframe.setAttribute("allow", "autoplay; encrypted-media; fullscreen");
+            iframe.setAttribute("allowfullscreen", "true");
+            iframe.title = "YouTube Intro Quiz Player";
+
+            const originQuery = /^https?:$/.test(window.location.protocol)
+              ? "&origin=" + encodeURIComponent(window.location.origin)
+              : "";
+            iframe.src = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&playsinline=1&rel=0&controls=${isHost ? 1 : 0}${originQuery}`;
+
+            container.appendChild(iframe);
+
+            ytInstance = new window.YT.Player(iframe, {
+              events: {
+                onReady: (event) => {
+                  isReady = true;
+                  if (typeof onReadyHook === "function") {
+                    onReadyHook(event.target);
+                  }
+                  const latestState = options.getLatestState ? options.getLatestState() : state;
+                  if (typeof latestState.startTime === "number" && latestState.startTime > 0) {
+                    event.target.seekTo?.(latestState.startTime, true);
+                  }
+                  if (latestState.isPlaying) {
+                    event.target.playVideo?.();
+                  } else {
+                    event.target.pauseVideo?.();
+                  }
+                },
+                onError: (event) => {
+                  showError(event.data);
+                }
+              }
+            });
+          });
+          return;
+        }
+
+        // 同じ曲で再生・停止アクションが更新された場合
+        if (isReady && ytInstance && lastActionTs !== (state.actionTimestamp || 0)) {
+          lastActionTs = state.actionTimestamp || 0;
+          if (state.isPlaying) {
+            if (typeof state.startTime === "number") {
+              const currentPos = ytInstance.getCurrentTime?.() || 0;
+              if (Math.abs(currentPos - state.startTime) > 1.2) {
+                ytInstance.seekTo?.(state.startTime, true);
+              }
+            }
+            ytInstance.playVideo?.();
+          } else {
+            ytInstance.pauseVideo?.();
+          }
+        }
+      }
+
+      return {
+        sync,
+        destroy,
+        getInstance: () => (isReady ? ytInstance : null)
+      };
+    }
+
+    // =========================================================================
+    // 6. アプリケーション状態管理
+    // =========================================================================
     const INITIAL_STATE = {
-      videoId: '',
+      videoId: "",
       isPlaying: false,
       startTime: 0,
       actionTimestamp: 0,
@@ -152,775 +781,585 @@
       soundEffect: null
     };
 
-    function App() {
-      const [role, setRole] = useState(null); // 'host' | 'player'
-      const [playerName, setPlayerName] = useState(() => localStorage.getItem('intro_player_name') || '');
-      const [playerId] = useState(() => {
-        let id = localStorage.getItem('intro_player_id');
-        if (!id) {
-          id = 'user_' + Math.random().toString(36).substring(2, 10);
-          localStorage.setItem('intro_player_id', id);
+    let currentRole = null; // null | "host" | "player"
+    let playerName = localStorage.getItem("intro_player_name") || "";
+    let playerId = localStorage.getItem("intro_player_id");
+    if (!playerId) {
+      playerId = "user_" + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem("intro_player_id", playerId);
+    }
+
+    let gameState = { ...INITIAL_STATE };
+    let lastSoundTs = Date.now();
+    let audioUnlocked = false;
+
+    const hostPlayerManager = createManagedYouTubePlayer({
+      containerId: "host-yt-container",
+      isHost: true,
+      errorBoxId: "host-yt-error-box",
+      placeholderId: "host-yt-placeholder"
+    });
+
+    const participantPlayerManager = createManagedYouTubePlayer({
+      containerId: "player-yt-wrapper",
+      isHost: false,
+      errorBoxId: "player-yt-error-box",
+      placeholderId: null,
+      onReadyHook: (playerInstance) => {
+        if (audioUnlocked) {
+          playerInstance.unMute?.();
+          playerInstance.setVolume?.(100);
         }
-        return id;
-      });
+      }
+    });
 
-      const [user, setUser] = useState(null);
-      const [gameState, setGameState] = useState(INITIAL_STATE);
-      const [showConfigModal, setShowConfigModal] = useState(false);
+    // =========================================================================
+    // 7. Firestore & フォールバック状態同期
+    // =========================================================================
+    const localChannel = typeof BroadcastChannel !== "undefined"
+      ? new BroadcastChannel("intro_quiz_channel")
+      : null;
 
-      // 効果音トリガー監視
-      const lastSoundTsRef = useRef(0);
-      useEffect(() => {
-        if (gameState.soundEffect && gameState.soundEffect.ts > lastSoundTsRef.current) {
-          lastSoundTsRef.current = gameState.soundEffect.ts;
-          playSound(gameState.soundEffect.type);
-        }
-      }, [gameState.soundEffect]);
-
-      // Firebase認証
-      useEffect(() => {
-        if (!isFirebaseConfigured) return;
-        signInAnonymously(auth).catch(console.error);
-        return onAuthStateChanged(auth, (u) => setUser(u));
-      }, []);
-
-      // 状態同期（Firebase Firestore または 同一ブラウザ用 BroadcastChannel）
-      useEffect(() => {
-        if (isFirebaseConfigured) {
-          if (!user) return;
-          const docRef = doc(db, 'intro_quiz', ROOM_ID);
-          const unsub = onSnapshot(docRef, (snap) => {
-            if (snap.exists()) {
-              setGameState({ ...INITIAL_STATE, ...snap.data() });
-            } else {
-              setDoc(docRef, INITIAL_STATE);
-            }
-          });
-          return () => unsub();
-        } else {
-          const saved = localStorage.getItem('intro_local_state');
-          if (saved) setGameState({ ...INITIAL_STATE, ...JSON.parse(saved) });
-
-          const bc = new BroadcastChannel('intro_quiz_channel');
-          bc.onmessage = (e) => {
-            if (e.data) setGameState({ ...INITIAL_STATE, ...e.data });
-          };
-          return () => bc.close();
-        }
-      }, [user]);
-
-      // 状態更新ヘルパー
-      const updateGameState = async (patch) => {
-        const nextState = { ...gameState, ...patch };
-        if (isFirebaseConfigured && db) {
-          const docRef = doc(db, 'intro_quiz', ROOM_ID);
-          await setDoc(docRef, patch, { merge: true });
-        } else {
-          setGameState(nextState);
-          localStorage.setItem('intro_local_state', JSON.stringify(nextState));
-          const bc = new BroadcastChannel('intro_quiz_channel');
-          bc.postMessage(nextState);
-          bc.close();
+    if (localChannel) {
+      localChannel.onmessage = (event) => {
+        if (!useFirebaseRealtime && event.data) {
+          applyIncomingState(event.data);
         }
       };
+    }
 
-      // 参加者の早押し処理（先着1名排他ロック + 音楽即時停止）
-      const handleBuzz = async () => {
-        if (gameState.buzzerUser || (gameState.wrongUsers || []).includes(playerId)) return;
+    function applyIncomingState(rawState) {
+      gameState = { ...INITIAL_STATE, ...rawState };
 
-        const soundPayload = { type: 'buzz', ts: Date.now() };
+      // 入室前の古い効果音は鳴らさず、新しい効果音イベントのみ再生
+      if (gameState.soundEffect && gameState.soundEffect.ts > lastSoundTs) {
+        lastSoundTs = gameState.soundEffect.ts;
+        playSound(gameState.soundEffect.type);
+      }
 
-        if (isFirebaseConfigured && db) {
-          const docRef = doc(db, 'intro_quiz', ROOM_ID);
-          try {
-            await runTransaction(db, async (transaction) => {
-              const sfDoc = await transaction.get(docRef);
-              const data = sfDoc.exists() ? sfDoc.data() : INITIAL_STATE;
-              if (data.buzzerUser) {
-                throw "ALREADY_BUZZED";
+      renderCurrentRoleView();
+    }
+
+    async function updateGameState(patch) {
+      const nextState = { ...gameState, ...patch };
+      if (useFirebaseRealtime && db) {
+        try {
+          const docRef = doc(db, ROOM_COLLECTION, ROOM_DOC_ID);
+          await setDoc(docRef, patch, { merge: true });
+        } catch (err) {
+          console.error("Firestore update error:", err);
+          showToast("通信エラーが発生しました: " + err.message, "error");
+        }
+      } else {
+        applyIncomingState(nextState);
+        try {
+          localStorage.setItem("intro_local_state", JSON.stringify(nextState));
+        } catch (e) {}
+        if (localChannel) {
+          localChannel.postMessage(nextState);
+        }
+      }
+    }
+
+    async function initFirebaseSync() {
+      try {
+        firebaseApp = initializeApp(firebaseConfig);
+        auth = getAuth(firebaseApp);
+        db = getFirestore(firebaseApp);
+
+        await signInAnonymously(auth);
+
+        onAuthStateChanged(auth, (user) => {
+          if (!user) return;
+          const docRef = doc(db, ROOM_COLLECTION, ROOM_DOC_ID);
+          onSnapshot(
+            docRef,
+            (snap) => {
+              useFirebaseRealtime = true;
+              setConnectionStatus("connected", "🟢 オンライン同期（Firebase接続済み）");
+              if (snap.exists()) {
+                applyIncomingState(snap.data());
+              } else {
+                setDoc(docRef, INITIAL_STATE).catch(console.error);
               }
-              transaction.set(docRef, {
+            },
+            (err) => {
+              useFirebaseRealtime = false;
+              setConnectionStatus("error", `🔴 Firestore接続エラー: ${err.code || err.message}`);
+              loadLocalFallbackState();
+            }
+          );
+        });
+      } catch (err) {
+        useFirebaseRealtime = false;
+        setConnectionStatus("error", `🔴 Firebase認証エラー: ${err.code || err.message}`);
+        loadLocalFallbackState();
+      }
+    }
+
+    function loadLocalFallbackState() {
+      try {
+        const saved = localStorage.getItem("intro_local_state");
+        if (saved) {
+          applyIncomingState(JSON.parse(saved));
+        }
+      } catch (e) {}
+    }
+
+    initFirebaseSync();
+
+    // =========================================================================
+    // 8. 画面描画・DOM更新
+    // =========================================================================
+    function renderCurrentRoleView() {
+      if (currentRole === "host") {
+        renderHostView();
+      } else if (currentRole === "player") {
+        renderPlayerView();
+      }
+    }
+
+    function renderHostView() {
+      const hasVideo = Boolean(gameState.videoId);
+      const wrongList = Array.isArray(gameState.wrongUsers) ? gameState.wrongUsers : [];
+
+      // 回答者アラートバナー
+      const buzzerAlertEl = document.getElementById("host-buzzer-alert");
+      const buzzerNameEl = document.getElementById("host-buzzer-name");
+      if (gameState.buzzerUser) {
+        buzzerAlertEl.classList.remove("hidden");
+        buzzerNameEl.textContent = `🎤 ${gameState.buzzerUser} さん`;
+      } else {
+        buzzerAlertEl.classList.add("hidden");
+      }
+
+      // 再生ステータスバッジ
+      const statusBadge = document.getElementById("host-play-status-badge");
+      if (gameState.isPlaying) {
+        statusBadge.textContent = "▶ 再生中";
+        statusBadge.className = "text-xs px-2.5 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300";
+      } else {
+        statusBadge.textContent = "⏸ 停止中";
+        statusBadge.className = "text-xs px-2.5 py-0.5 rounded-full font-bold bg-slate-700 text-slate-300";
+      }
+
+      // ボタンの有効/無効制御
+      document.getElementById("host-play-btn").disabled = !hasVideo;
+      document.getElementById("host-pause-btn").disabled = !hasVideo;
+      document.getElementById("host-restart-btn").disabled = !hasVideo;
+      document.getElementById("host-reveal-btn").disabled = !hasVideo;
+
+      // 答え公開ボタンテキスト
+      document.getElementById("host-reveal-btn-text").textContent =
+        gameState.revealAnswer ? "答えを隠す" : "答え（動画）を全員に表示";
+
+      // お手つき解除ボタン
+      const clearWrongBtn = document.getElementById("host-clear-wrong-btn");
+      if (wrongList.length > 0) {
+        clearWrongBtn.classList.remove("hidden");
+        clearWrongBtn.textContent = `お手つき解除 (${wrongList.length})`;
+      } else {
+        clearWrongBtn.classList.add("hidden");
+      }
+
+      // 司会者側YouTubeプレーヤー同期
+      hostPlayerManager.sync(gameState, {
+        getLatestState: () => gameState
+      });
+    }
+
+    function renderPlayerView() {
+      const wrongList = Array.isArray(gameState.wrongUsers) ? gameState.wrongUsers : [];
+      const isWrongUser = wrongList.includes(playerId);
+      const isSomeoneBuzzing = Boolean(gameState.buzzerUser);
+      const isMeBuzzing = gameState.buzzerUserId === playerId;
+      const hasVideo = Boolean(gameState.videoId);
+      const canBuzz = !isSomeoneBuzzing && !isWrongUser && hasVideo;
+
+      // 1. ステータスカード表示更新
+      const statusCard = document.getElementById("player-status-card");
+      if (isSomeoneBuzzing) {
+        const titleText = isMeBuzzing
+          ? "あなたの回答権です！"
+          : `${escapeHtml(gameState.buzzerUser)} さんが回答中！`;
+        const subText = isMeBuzzing
+          ? "通話で曲名を答えてください！"
+          : "回答が終わるまでお待ちください";
+        statusCard.innerHTML = `
+          <div class="space-y-1.5 py-1">
+            <span class="inline-block px-3 py-1 rounded-full bg-amber-500 text-slate-950 font-black text-xs">
+              回答中！
+            </span>
+            <div class="text-2xl sm:text-4xl font-black text-amber-300">
+              ${titleText}
+            </div>
+            <p class="text-xs text-slate-300">${subText}</p>
+          </div>
+        `;
+      } else if (!hasVideo) {
+        statusCard.innerHTML = `
+          <div class="py-3 space-y-1">
+            <p class="text-lg font-bold text-slate-200">司会者の出題待ち...</p>
+            <p class="text-xs text-slate-400">曲がセットされるまでそのままお待ちください</p>
+          </div>
+        `;
+      } else if (gameState.isPlaying) {
+        statusCard.innerHTML = `
+          <div class="py-2 space-y-1.5">
+            <div class="flex items-center justify-center gap-1.5 text-emerald-400 font-black text-lg">
+              <svg class="w-6 h-6 animate-pulse" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+              </svg>
+              <span>問題再生中！よく聴いて！</span>
+            </div>
+            <p class="text-xs text-slate-300">わかったら下の早押しボタンをタップ！</p>
+          </div>
+        `;
+      } else {
+        statusCard.innerHTML = `
+          <div class="py-3 space-y-1">
+            <p class="text-lg font-bold text-indigo-200">スタンバイ中</p>
+            <p class="text-xs text-slate-400">司会者が再生するまでお待ちください</p>
+          </div>
+        `;
+      }
+
+      // 2. 巨大早押しボタンのスタイルとラベル更新
+      const buzzBtn = document.getElementById("player-buzz-btn");
+      const buzzLabel = document.getElementById("player-buzz-label");
+      buzzBtn.disabled = !canBuzz;
+
+      const baseBuzzClass = "w-60 h-60 sm:w-72 sm:h-72 rounded-full font-black text-2xl sm:text-3xl tracking-wider flex flex-col items-center justify-center gap-2 transition-all select-none ";
+      if (isMeBuzzing) {
+        buzzBtn.className = baseBuzzClass + "bg-amber-500 text-slate-950 ring-8 ring-amber-300/50 scale-105 cursor-default";
+        buzzLabel.textContent = "回答中！";
+      } else if (isWrongUser) {
+        buzzBtn.className = baseBuzzClass + "bg-slate-800 text-slate-500 border-4 border-slate-700 cursor-not-allowed";
+        buzzLabel.textContent = "回答済み";
+      } else if (isSomeoneBuzzing) {
+        buzzBtn.className = baseBuzzClass + "bg-slate-800/80 text-slate-500 border-4 border-slate-700 cursor-not-allowed";
+        buzzLabel.textContent = "ロック中";
+      } else if (!hasVideo) {
+        buzzBtn.className = baseBuzzClass + "bg-slate-800/60 text-slate-500 border-4 border-slate-700 cursor-not-allowed";
+        buzzLabel.textContent = "待機中";
+      } else {
+        buzzBtn.className = baseBuzzClass + "bg-gradient-to-b from-rose-500 to-red-700 hover:from-rose-400 hover:to-red-600 text-white shadow-[0_12px_0_rgb(136,19,55),0_20px_40px_rgba(225,29,72,0.5)] active:translate-y-2 active:shadow-[0_4px_0_rgb(136,19,55)] cursor-pointer";
+        buzzLabel.textContent = "わかった！";
+      }
+
+      // 3. ネタバレ防止カバー表示切替
+      const secretCover = document.getElementById("player-secret-cover");
+      const videoHeader = document.getElementById("player-video-header");
+      const ytWrapper = document.getElementById("player-yt-wrapper");
+      if (gameState.revealAnswer) {
+        secretCover.classList.add("hidden");
+        ytWrapper.classList.remove("pointer-events-none");
+        videoHeader.textContent = "🎵 正解の曲はこちら！";
+      } else {
+        secretCover.classList.remove("hidden");
+        ytWrapper.classList.add("pointer-events-none");
+        videoHeader.textContent = "🙈 答え公開まで映像は隠れています";
+      }
+
+      // 4. 参加者側YouTubeプレーヤー同期
+      participantPlayerManager.sync(gameState, {
+        getLatestState: () => gameState
+      });
+    }
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    // =========================================================================
+    // 9. 画面遷移（入室 / 退出）
+    // =========================================================================
+    function enterRole(role) {
+      getAudioContext();
+      currentRole = role;
+
+      document.getElementById("entry-screen").classList.add("hidden");
+      document.getElementById("app-screen").classList.remove("hidden");
+
+      const roleLabel = document.getElementById("header-role-label");
+      const hostView = document.getElementById("host-view");
+      const playerView = document.getElementById("player-view");
+
+      if (role === "host") {
+        roleLabel.textContent = "司会者コントロール";
+        hostView.classList.remove("hidden");
+        playerView.classList.add("hidden");
+      } else {
+        roleLabel.textContent = `参加者: ${playerName}`;
+        playerView.classList.remove("hidden");
+        hostView.classList.add("hidden");
+      }
+
+      renderCurrentRoleView();
+    }
+
+    function leaveRole() {
+      currentRole = null;
+      hostPlayerManager.destroy();
+      participantPlayerManager.destroy();
+
+      document.getElementById("app-screen").classList.add("hidden");
+      document.getElementById("entry-screen").classList.remove("hidden");
+    }
+
+    // =========================================================================
+    // 10. イベントリスナー登録
+    // =========================================================================
+    const nameInputEl = document.getElementById("player-name-input");
+    const joinPlayerBtnEl = document.getElementById("join-player-btn");
+    nameInputEl.value = playerName;
+    joinPlayerBtnEl.disabled = !playerName.trim();
+
+    nameInputEl.addEventListener("input", (e) => {
+      playerName = e.target.value;
+      joinPlayerBtnEl.disabled = !playerName.trim();
+    });
+
+    document.getElementById("player-entry-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const trimmed = playerName.trim();
+      if (!trimmed) return;
+      playerName = trimmed;
+      localStorage.setItem("intro_player_name", playerName);
+      enterRole("player");
+    });
+
+    document.getElementById("join-host-btn").addEventListener("click", () => {
+      enterRole("host");
+    });
+
+    document.getElementById("leave-room-btn").addEventListener("click", () => {
+      leaveRole();
+    });
+
+    // 司会者：YouTube URLセット（セット時は停止状態で待機し音漏れ防止）
+    document.getElementById("host-url-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      getAudioContext();
+      const urlInput = document.getElementById("host-url-input");
+      const id = extractYouTubeId(urlInput.value);
+      if (!id) {
+        showToast("有効なYouTubeのURLまたは11桁の動画IDを入力してください", "error");
+        return;
+      }
+
+      await updateGameState({
+        videoId: id,
+        isPlaying: false,
+        startTime: 0,
+        actionTimestamp: Date.now(),
+        buzzerUser: null,
+        buzzerUserId: null,
+        wrongUsers: [],
+        revealAnswer: false
+      });
+
+      urlInput.value = "";
+      showToast("曲をセットしました！（待機状態）", "success");
+    });
+
+    // 司会者：再生
+    document.getElementById("host-play-btn").addEventListener("click", async () => {
+      getAudioContext();
+      if (!gameState.videoId) return;
+      const yt = hostPlayerManager.getInstance();
+      const currentSec = yt?.getCurrentTime?.() || gameState.startTime || 0;
+      await updateGameState({
+        isPlaying: true,
+        startTime: currentSec,
+        actionTimestamp: Date.now(),
+        buzzerUser: null,
+        buzzerUserId: null
+      });
+    });
+
+    // 司会者：ストップ
+    document.getElementById("host-pause-btn").addEventListener("click", async () => {
+      const yt = hostPlayerManager.getInstance();
+      const currentSec = yt?.getCurrentTime?.() || gameState.startTime || 0;
+      await updateGameState({
+        isPlaying: false,
+        startTime: currentSec,
+        actionTimestamp: Date.now()
+      });
+    });
+
+    // 司会者：最初から再生
+    document.getElementById("host-restart-btn").addEventListener("click", async () => {
+      getAudioContext();
+      if (!gameState.videoId) return;
+      const yt = hostPlayerManager.getInstance();
+      yt?.seekTo?.(0, true);
+      await updateGameState({
+        isPlaying: true,
+        startTime: 0,
+        actionTimestamp: Date.now(),
+        buzzerUser: null,
+        buzzerUserId: null
+      });
+    });
+
+    // 司会者：正解（答え公開＋正解効果音＋音楽再生）
+    document.getElementById("host-correct-btn").addEventListener("click", async () => {
+      getAudioContext();
+      const yt = hostPlayerManager.getInstance();
+      const currentSec = yt?.getCurrentTime?.() || gameState.startTime || 0;
+      await updateGameState({
+        isPlaying: true,
+        startTime: currentSec,
+        revealAnswer: true,
+        buzzerUser: null,
+        buzzerUserId: null,
+        actionTimestamp: Date.now(),
+        soundEffect: { type: "correct", ts: Date.now() }
+      });
+    });
+
+    // 司会者：不正解（回答者ロック＋不正解効果音＋停止状態維持）
+    document.getElementById("host-wrong-btn").addEventListener("click", async () => {
+      getAudioContext();
+      const prevWrong = Array.isArray(gameState.wrongUsers) ? gameState.wrongUsers : [];
+      const nextWrong = gameState.buzzerUserId
+        ? [...new Set([...prevWrong, gameState.buzzerUserId])]
+        : prevWrong;
+
+      await updateGameState({
+        buzzerUser: null,
+        buzzerUserId: null,
+        wrongUsers: nextWrong,
+        isPlaying: false,
+        actionTimestamp: Date.now(),
+        soundEffect: { type: "wrong", ts: Date.now() }
+      });
+    });
+
+    // 司会者：答え表示トグル
+    document.getElementById("host-reveal-btn").addEventListener("click", async () => {
+      if (!gameState.videoId) return;
+      await updateGameState({
+        revealAnswer: !gameState.revealAnswer
+      });
+    });
+
+    // 司会者：お手つき解除
+    document.getElementById("host-clear-wrong-btn").addEventListener("click", async () => {
+      await updateGameState({ wrongUsers: [] });
+      showToast("お手つきを解除しました", "info");
+    });
+
+    // 参加者：スマホ用音声有効化バナー
+    document.getElementById("player-unlock-audio-btn").addEventListener("click", () => {
+      playSound("buzz");
+      audioUnlocked = true;
+      const yt = participantPlayerManager.getInstance();
+      if (yt) {
+        yt.unMute?.();
+        yt.setVolume?.(100);
+        if (gameState.isPlaying && gameState.videoId) {
+          if (typeof gameState.startTime === "number") {
+            yt.seekTo?.(gameState.startTime, true);
+          }
+          yt.playVideo?.();
+        }
+      }
+      document.getElementById("player-unlock-audio-btn").classList.add("hidden");
+      showToast("音声を有効にしました！", "success");
+    });
+
+    // 参加者：巨大早押しボタン（Firestore runTransaction による先着1名排他制御）
+    document.getElementById("player-buzz-btn").addEventListener("click", async () => {
+      getAudioContext();
+      const wrongList = Array.isArray(gameState.wrongUsers) ? gameState.wrongUsers : [];
+      if (gameState.buzzerUser || wrongList.includes(playerId) || !gameState.videoId) {
+        return;
+      }
+
+      const soundPayload = { type: "buzz", ts: Date.now() };
+
+      if (useFirebaseRealtime && db) {
+        const docRef = doc(db, ROOM_COLLECTION, ROOM_DOC_ID);
+        try {
+          await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(docRef);
+            const data = snap.exists() ? snap.data() : INITIAL_STATE;
+            if (data.buzzerUser) {
+              throw new Error("ALREADY_BUZZED");
+            }
+            transaction.set(
+              docRef,
+              {
                 buzzerUser: playerName,
                 buzzerUserId: playerId,
                 isPlaying: false,
                 actionTimestamp: Date.now(),
                 soundEffect: soundPayload
-              }, { merge: true });
-            });
-          } catch (e) {
-            console.log("早押し競合:", e);
-          }
-        } else {
-          if (gameState.buzzerUser) return;
-          updateGameState({
-            buzzerUser: playerName,
-            buzzerUserId: playerId,
-            isPlaying: false,
-            actionTimestamp: Date.now(),
-            soundEffect: soundPayload
+              },
+              { merge: true }
+            );
           });
+        } catch (err) {
+          if (err.message === "ALREADY_BUZZED") {
+            showToast("タッチの差で他の人が先に押しました！", "info");
+          } else {
+            console.error("Transaction error:", err);
+          }
         }
-      };
-
-      if (!role) {
-        return (
-          <>
-            <EntryScreen
-              playerName={playerName}
-              setPlayerName={setPlayerName}
-              onJoinPlayer={() => {
-                localStorage.setItem('intro_player_name', playerName.trim());
-                setRole('player');
-              }}
-              onJoinHost={() => setRole('host')}
-              isFirebaseConfigured={isFirebaseConfigured}
-              onOpenConfig={() => setShowConfigModal(true)}
-            />
-            {showConfigModal && (
-              <FirebaseConfigModal onClose={() => setShowConfigModal(false)} />
-            )}
-          </>
-        );
+      } else {
+        if (gameState.buzzerUser) return;
+        await updateGameState({
+          buzzerUser: playerName,
+          buzzerUserId: playerId,
+          isPlaying: false,
+          actionTimestamp: Date.now(),
+          soundEffect: soundPayload
+        });
       }
-
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 flex flex-col">
-          {/* ヘッダー */}
-          <header className="px-4 py-3 bg-black/40 border-b border-white/10 flex items-center justify-between sticky top-0 z-20 backdrop-blur-md">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 bg-indigo-600 rounded-xl">
-                <Music className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h1 className="font-bold text-base sm:text-lg leading-tight">イントロクイズ</h1>
-                <span className="text-[11px] text-indigo-300">
-                  {role === 'host' ? '司会者コントロール' : `参加者: ${playerName}`}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {!isFirebaseConfigured && (
-                <button
-                  onClick={() => setShowConfigModal(true)}
-                  className="text-xs px-2.5 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30"
-                >
-                  通信設定
-                </button>
-              )}
-              <button
-                onClick={() => setRole(null)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium transition"
-              >
-                <LogOut className="w-4 h-4" />
-                退出
-              </button>
-            </div>
-          </header>
-
-          {/* メイン画面 */}
-          <main className="flex-1 max-w-2xl w-full mx-auto p-4 sm:p-6 flex flex-col gap-6">
-            {role === 'host' ? (
-              <HostView gameState={gameState} updateGameState={updateGameState} />
-            ) : (
-              <PlayerView
-                gameState={gameState}
-                playerName={playerName}
-                playerId={playerId}
-                onBuzz={handleBuzz}
-              />
-            )}
-          </main>
-
-          {showConfigModal && (
-            <FirebaseConfigModal onClose={() => setShowConfigModal(false)} />
-          )}
-        </div>
-      );
-    }
+    });
 
     // =========================================================================
-    // 入室画面（パスワード不要・ワンタップで司会者/参加者を選択）
+    // 11. Firebase設定変更モーダル制御
     // =========================================================================
-    function EntryScreen({ playerName, setPlayerName, onJoinPlayer, onJoinHost, isFirebaseConfigured, onOpenConfig }) {
-      const handlePlayerSubmit = (e) => {
-        e.preventDefault();
-        if (!playerName.trim()) return;
-        onJoinPlayer();
-      };
+    const configModalEl = document.getElementById("config-modal");
+    const configTextareaEl = document.getElementById("config-textarea");
 
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white/10 backdrop-blur-xl border border-white/15 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
-            <div className="text-center space-y-2">
-              <div className="w-16 h-16 bg-gradient-to-tr from-indigo-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto shadow-lg">
-                <Music className="w-9 h-9 text-white" />
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-black tracking-wide">イントロクイズ</h1>
-              <p className="text-xs sm:text-sm text-indigo-200">
-                通話しながら楽しめる早押し音楽クイズ
-              </p>
-            </div>
+    document.getElementById("open-config-btn").addEventListener("click", () => {
+      configTextareaEl.value = JSON.stringify(getActiveFirebaseConfig(), null, 2);
+      configModalEl.classList.remove("hidden");
+    });
 
-            {/* 参加者として入室 */}
-            <form onSubmit={handlePlayerSubmit} className="bg-slate-900/60 border border-white/10 rounded-2xl p-5 space-y-4">
-              <div className="flex items-center gap-2 text-indigo-300 font-bold text-sm">
-                <Users className="w-4 h-4" />
-                <span>参加者として入る</span>
-              </div>
-              <div>
-                <input
-                  type="text"
-                  required
-                  maxLength={15}
-                  placeholder="あなたの名前（ニックネーム）"
-                  value={playerName}
-                  onChange={(e) => setPlayerName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-white/15 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={!playerName.trim()}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 font-bold text-base shadow-lg transition active:scale-95 disabled:opacity-40"
-              >
-                クイズに参加する
-              </button>
-            </form>
+    document.getElementById("close-config-btn").addEventListener("click", () => {
+      configModalEl.classList.add("hidden");
+    });
 
-            <div className="relative flex items-center justify-center">
-              <div className="w-full border-t border-white/10"></div>
-              <span className="px-3 text-xs text-slate-400 bg-transparent">または</span>
-              <div className="w-full border-t border-white/10"></div>
-            </div>
+    document.getElementById("reset-config-btn").addEventListener("click", () => {
+      localStorage.removeItem("intro_quiz_firebase_config");
+      window.location.reload();
+    });
 
-            {/* 司会者として入室（パスワードなし） */}
-            <button
-              onClick={onJoinHost}
-              className="w-full py-3.5 px-4 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 flex items-center justify-center gap-2.5 font-bold text-slate-100 transition active:scale-95"
-            >
-              <Mic className="w-5 h-5 text-pink-400" />
-              <span>司会者として入る（出題する）</span>
-            </button>
-
-            {/* 通信ステータス表示 */}
-            <div className="pt-2 text-center">
-              <button
-                onClick={onOpenConfig}
-                className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white transition"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                {isFirebaseConfigured
-                  ? "🟢 オンライン同期（Firebase接続済み）"
-                  : "🟡 ローカルモード（別端末と同期するにはFirebase設定）"}
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // =========================================================================
-    // 司会者画面
-    // =========================================================================
-    function HostView({ gameState, updateGameState }) {
-      const [urlInput, setUrlInput] = useState('');
-      const [ytReady, setYtReady] = useState(false);
-      const playerRef = useRef(null);
-
-      // YouTube Player 初期化
-      useEffect(() => {
-        const initPlayer = () => {
-          if (playerRef.current) return;
-          playerRef.current = new window.YT.Player('host-yt-player', {
-            height: '200',
-            width: '100%',
-            videoId: gameState.videoId || '',
-            playerVars: { playsinline: 1, controls: 1, rel: 0 },
-            events: {
-              onReady: () => setYtReady(true)
-            }
-          });
-        };
-
-        if (window.YT && window.YT.Player) {
-          initPlayer();
-        } else {
-          window.onYouTubeIframeAPIReady = initPlayer;
-        }
-      }, []);
-
-      // 動画ID変更反映
-      useEffect(() => {
-        if (ytReady && playerRef.current && gameState.videoId) {
-          const currentUrl = playerRef.current.getVideoUrl?.() || '';
-          if (!currentUrl.includes(gameState.videoId)) {
-            playerRef.current.cueVideoById(gameState.videoId);
-          }
-        }
-      }, [gameState.videoId, ytReady]);
-
-      // 再生・停止状態反映（参加者が早押しした時も司会者側を止める）
-      useEffect(() => {
-        if (!ytReady || !playerRef.current) return;
-        if (gameState.isPlaying) {
-          playerRef.current.playVideo?.();
-        } else {
-          playerRef.current.pauseVideo?.();
-        }
-      }, [gameState.isPlaying, gameState.actionTimestamp, ytReady]);
-
-      // URLセット
-      const handleLoadVideo = (e) => {
-        e.preventDefault();
-        const id = extractYouTubeId(urlInput.trim());
-        if (!id) {
-          alert('有効なYouTubeのURLを入力してください');
-          return;
-        }
-        if (ytReady && playerRef.current) {
-          playerRef.current.cueVideoById(id);
-        }
-        updateGameState({
-          videoId: id,
-          isPlaying: false,
-          startTime: 0,
-          actionTimestamp: Date.now(),
-          buzzerUser: null,
-          buzzerUserId: null,
-          wrongUsers: [],
-          revealAnswer: false
-        });
-        setUrlInput('');
-      };
-
-      const handlePlay = () => {
-        if (!gameState.videoId) return;
-        const currentSec = playerRef.current?.getCurrentTime?.() || 0;
-        updateGameState({
-          isPlaying: true,
-          startTime: currentSec,
-          actionTimestamp: Date.now(),
-          buzzerUser: null,
-          buzzerUserId: null
-        });
-      };
-
-      const handlePause = () => {
-        const currentSec = playerRef.current?.getCurrentTime?.() || 0;
-        updateGameState({
-          isPlaying: false,
-          startTime: currentSec,
-          actionTimestamp: Date.now()
-        });
-      };
-
-      const handleRestartFromZero = () => {
-        if (!gameState.videoId) return;
-        playerRef.current?.seekTo?.(0, true);
-        updateGameState({
-          isPlaying: true,
-          startTime: 0,
-          actionTimestamp: Date.now(),
-          buzzerUser: null,
-          buzzerUserId: null
-        });
-      };
-
-      // 正解処理
-      const handleCorrect = () => {
-        updateGameState({
-          isPlaying: true,
-          revealAnswer: true,
-          buzzerUser: null,
-          buzzerUserId: null,
-          actionTimestamp: Date.now(),
-          soundEffect: { type: 'correct', ts: Date.now() }
-        });
-      };
-
-      // 不正解処理（回答者をロックして曲を再開できるようにする）
-      const handleWrong = () => {
-        const nextWrong = gameState.buzzerUserId
-          ? [...new Set([...(gameState.wrongUsers || []), gameState.buzzerUserId])]
-          : (gameState.wrongUsers || []);
-
-        updateGameState({
-          buzzerUser: null,
-          buzzerUserId: null,
-          wrongUsers: nextWrong,
-          isPlaying: false,
-          actionTimestamp: Date.now(),
-          soundEffect: { type: 'wrong', ts: Date.now() }
-        });
-      };
-
-      return (
-        <div className="space-y-5">
-          {/* 1. YouTube URL 入力 */}
-          <form onSubmit={handleLoadVideo} className="bg-white/10 border border-white/15 rounded-2xl p-4 space-y-3">
-            <label className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-              <LinkIcon className="w-4 h-4" />
-              出題するYouTubeのURLを貼り付け
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="https://www.youtube.com/watch?v=..."
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-pink-400"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2.5 rounded-xl bg-pink-600 hover:bg-pink-500 font-bold text-sm shrink-0 transition"
-              >
-                セット
-              </button>
-            </div>
-          </form>
-
-          {/* 2. 回答者アラート（誰かが押した時） */}
-          {gameState.buzzerUser && (
-            <div className="bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 rounded-2xl p-5 shadow-xl animate-pulse space-y-4">
-              <div className="text-center">
-                <span className="text-xs font-black uppercase tracking-widest bg-black/20 text-white px-3 py-1 rounded-full">
-                  回答権獲得！
-                </span>
-                <div className="text-3xl sm:text-4xl font-black mt-2 text-white drop-shadow">
-                  🎤 {gameState.buzzerUser} さん
-                </div>
-                <p className="text-xs font-bold text-amber-100 mt-1">
-                  通話で口頭回答を聞いて判定してください
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={handleCorrect}
-                  className="py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-base flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
-                >
-                  <CheckCircle2 className="w-5 h-5" />
-                  正解！（答え公開）
-                </button>
-                <button
-                  onClick={handleWrong}
-                  className="py-3.5 rounded-xl bg-rose-700 hover:bg-rose-600 text-white font-black text-base flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
-                >
-                  <XCircle className="w-5 h-5" />
-                  不正解（続行）
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* 3. 再生コントロール */}
-          <div className="bg-white/10 border border-white/15 rounded-2xl p-4 space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-300">音楽コントロール（参加者と同期）</span>
-              <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${gameState.isPlaying ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-700 text-slate-300'}`}>
-                {gameState.isPlaying ? '▶ 再生中' : '⏸ 停止中'}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2.5">
-              <button
-                onClick={handlePlay}
-                disabled={!gameState.videoId}
-                className="py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 font-bold flex flex-col items-center justify-center gap-1 transition active:scale-95"
-              >
-                <Play className="w-6 h-6 fill-current" />
-                <span className="text-xs">再生</span>
-              </button>
-
-              <button
-                onClick={handlePause}
-                disabled={!gameState.videoId}
-                className="py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 font-bold flex flex-col items-center justify-center gap-1 transition active:scale-95"
-              >
-                <Pause className="w-6 h-6 fill-current" />
-                <span className="text-xs">ストップ</span>
-              </button>
-
-              <button
-                onClick={handleRestartFromZero}
-                disabled={!gameState.videoId}
-                className="py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 font-bold flex flex-col items-center justify-center gap-1 transition active:scale-95"
-              >
-                <RotateCcw className="w-6 h-6" />
-                <span className="text-xs">最初から再生</span>
-              </button>
-            </div>
-
-            {/* 答え公開・お手つきリセット */}
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={() => updateGameState({ revealAnswer: !gameState.revealAnswer })}
-                disabled={!gameState.videoId}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-40 text-xs font-bold flex items-center justify-center gap-1.5 transition"
-              >
-                <Eye className="w-4 h-4 text-pink-400" />
-                {gameState.revealAnswer ? '答えを隠す' : '答え（動画）を全員に表示'}
-              </button>
-
-              {(gameState.wrongUsers || []).length > 0 && (
-                <button
-                  onClick={() => updateGameState({ wrongUsers: [] })}
-                  className="py-2.5 px-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-bold"
-                >
-                  お手つき解除 ({gameState.wrongUsers.length})
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* 4. 司会者用プレビュー */}
-          <div className="bg-black/40 border border-white/10 rounded-2xl p-3 space-y-2">
-            <span className="text-[11px] text-slate-400 block">
-              司会者用モニター（参加者には答え公開まで映像は見えません）
-            </span>
-            <div className="rounded-xl overflow-hidden bg-black aspect-video">
-              <div id="host-yt-player"></div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // =========================================================================
-    // 参加者画面（音だけ聞こえる + 早押しボタン）
-    // =========================================================================
-    function PlayerView({ gameState, playerName, playerId, onBuzz }) {
-      const [audioUnlocked, setAudioUnlocked] = useState(false);
-      const [ytReady, setYtReady] = useState(false);
-      const playerRef = useRef(null);
-
-      // 参加者用 YouTube Player 初期化
-      useEffect(() => {
-        const initPlayer = () => {
-          if (playerRef.current) return;
-          playerRef.current = new window.YT.Player('player-yt-hidden', {
-            height: '200',
-            width: '100%',
-            videoId: gameState.videoId || '',
-            playerVars: {
-              playsinline: 1,
-              controls: 0,
-              disablekb: 1,
-              modestbranding: 1,
-              rel: 0
-            },
-            events: {
-              onReady: () => setYtReady(true)
-            }
-          });
-        };
-
-        if (window.YT && window.YT.Player) {
-          initPlayer();
-        } else {
-          window.onYouTubeIframeAPIReady = initPlayer;
-        }
-      }, []);
-
-      // 動画ID・再生状態・シーク位置の完全同期
-      useEffect(() => {
-        if (!ytReady || !playerRef.current) return;
-
-        if (!gameState.videoId) {
-          playerRef.current.stopVideo?.();
-          return;
-        }
-
-        const currentUrl = playerRef.current.getVideoUrl?.() || '';
-        if (!currentUrl.includes(gameState.videoId)) {
-          playerRef.current.loadVideoById({
-            videoId: gameState.videoId,
-            startSeconds: gameState.startTime || 0
-          });
-          if (!gameState.isPlaying) {
-            setTimeout(() => playerRef.current?.pauseVideo?.(), 300);
-          }
-          return;
-        }
-
-        if (gameState.isPlaying) {
-          if (typeof gameState.startTime === 'number') {
-            const diff = Math.abs((playerRef.current.getCurrentTime?.() || 0) - gameState.startTime);
-            if (diff > 1.5) {
-              playerRef.current.seekTo?.(gameState.startTime, true);
-            }
-          }
-          playerRef.current.playVideo?.();
-        } else {
-          playerRef.current.pauseVideo?.();
-        }
-      }, [gameState.videoId, gameState.isPlaying, gameState.actionTimestamp, ytReady]);
-
-      // スマホの自動再生ブロック解除
-      const unlockAudio = () => {
-        playSound('buzz');
-        if (ytReady && playerRef.current) {
-          playerRef.current.unMute?.();
-          playerRef.current.setVolume?.(100);
-          if (gameState.isPlaying && gameState.videoId) {
-            playerRef.current.playVideo?.();
-          }
-        }
-        setAudioUnlocked(true);
-      };
-
-      const isWrongUser = (gameState.wrongUsers || []).includes(playerId);
-      const isSomeoneBuzzing = Boolean(gameState.buzzerUser);
-      const isMeBuzzing = gameState.buzzerUserId === playerId;
-      const canBuzz = !isSomeoneBuzzing && !isWrongUser && Boolean(gameState.videoId);
-
-      return (
-        <div className="flex-1 flex flex-col justify-between gap-6">
-          {/* 音声有効化バナー（スマホ対策） */}
-          {!audioUnlocked && (
-            <button
-              onClick={unlockAudio}
-              className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black shadow-lg flex items-center justify-center gap-3 animate-bounce"
-            >
-              <Volume2 className="w-6 h-6" />
-              <span>タップして音声を有効にする（必須）</span>
-            </button>
-          )}
-
-          {/* ステータス表示エリア */}
-          <div className="bg-white/10 border border-white/15 rounded-3xl p-6 text-center space-y-3">
-            {isSomeoneBuzzing ? (
-              <div className="space-y-2 py-2">
-                <span className="inline-block px-3 py-1 rounded-full bg-amber-500 text-slate-950 font-black text-xs">
-                  回答中！
-                </span>
-                <div className="text-3xl sm:text-4xl font-black text-amber-300">
-                  {isMeBuzzing ? "あなたの回答権です！" : `${gameState.buzzerUser} さんが回答中！`}
-                </div>
-                <p className="text-xs text-slate-300">
-                  {isMeBuzzing ? "通話で曲名を答えてください！" : "回答が終わるまでお待ちください"}
-                </p>
-              </div>
-            ) : !gameState.videoId ? (
-              <div className="py-4 space-y-1">
-                <p className="text-lg font-bold text-slate-200">司会者の出題待ち...</p>
-                <p className="text-xs text-slate-400">曲がセットされるまでそのままお待ちください</p>
-              </div>
-            ) : gameState.isPlaying ? (
-              <div className="py-3 space-y-2">
-                <div className="flex items-center justify-center gap-1.5 text-emerald-400 font-black text-lg">
-                  <Volume2 className="w-6 h-6 animate-pulse" />
-                  <span>問題再生中！よく聴いて！</span>
-                </div>
-                <p className="text-xs text-slate-300">わかったら下の早押しボタンをタップ！</p>
-              </div>
-            ) : (
-              <div className="py-4 space-y-1">
-                <p className="text-lg font-bold text-indigo-200">スタンバイ中</p>
-                <p className="text-xs text-slate-400">司会者が再生するまでお待ちください</p>
-              </div>
-            )}
-          </div>
-
-          {/* 巨大早押しボタン */}
-          <div className="flex-1 flex items-center justify-center py-2">
-            <button
-              onClick={onBuzz}
-              disabled={!canBuzz}
-              className={`w-64 h-64 sm:w-72 sm:h-72 rounded-full font-black text-2xl sm:text-3xl tracking-wider flex flex-col items-center justify-center gap-2 transition-all select-none ${
-                isMeBuzzing
-                  ? 'bg-amber-500 text-slate-950 ring-8 ring-amber-300/50 scale-105'
-                  : isWrongUser
-                  ? 'bg-slate-800 text-slate-500 border-4 border-slate-700 cursor-not-allowed'
-                  : isSomeoneBuzzing
-                  ? 'bg-slate-800/80 text-slate-500 border-4 border-slate-700 cursor-not-allowed'
-                  : !gameState.videoId
-                  ? 'bg-slate-800/60 text-slate-500 border-4 border-slate-700 cursor-not-allowed'
-                  : 'bg-gradient-to-b from-rose-500 to-red-700 hover:from-rose-400 hover:to-red-600 text-white shadow-[0_12px_0_rgb(136,19,55),0_20px_40px_rgba(225,29,72,0.5)] active:translate-y-2 active:shadow-[0_4px_0_rgb(136,19,55)] cursor-pointer'
-              }`}
-            >
-              <Bell className="w-12 h-12" />
-              <span>
-                {isMeBuzzing
-                  ? '回答中！'
-                  : isWrongUser
-                  ? '回答済み'
-                  : isSomeoneBuzzing
-                  ? 'ロック中'
-                  : 'わかった！'}
-              </span>
-            </button>
-          </div>
-
-          {/* ネタバレ防止 YouTube プレーヤー（答え公開時のみ表示） */}
-          <div className={gameState.revealAnswer ? 'bg-white/10 border border-white/15 rounded-2xl p-3 space-y-2' : 'fixed -left-[9999px] w-px h-px opacity-0 pointer-events-none overflow-hidden'}>
-            {gameState.revealAnswer && (
-              <div className="text-center text-sm font-black text-amber-300">
-                🎵 正解の曲はこちら！
-              </div>
-            )}
-            <div className="rounded-xl overflow-hidden bg-black aspect-video">
-              <div id="player-yt-hidden"></div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // =========================================================================
-    // Firebase設定モーダル（コードを書き換えずにブラウザから設定可能）
-    // =========================================================================
-    function FirebaseConfigModal({ onClose }) {
-      const [configText, setConfigText] = useState('');
-
-      const handleSave = () => {
-        try {
-          const jsonMatch = configText.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) throw new Error();
-          const parsed = Function('"use strict";return (' + jsonMatch[0] + ')')();
-          if (!parsed.apiKey || !parsed.projectId) throw new Error();
-          localStorage.setItem('intro_quiz_firebase_config', JSON.stringify(parsed));
-          window.location.reload();
-        } catch (e) {
-          alert('Firebaseの設定オブジェクト（{ apiKey: "...", ... }）を正しく貼り付けてください。');
-        }
-      };
-
-      return (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-white/15 rounded-2xl max-w-md w-full p-6 space-y-4">
-            <h2 className="text-lg font-bold">オンライン同期（Firebase）設定</h2>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              別のスマホ・PC同士でリアルタイム通信を行うには、Firebaseの「firebaseConfig」を貼り付けて保存してください。
-            </p>
-            <textarea
-              rows={6}
-              placeholder={'{\n  apiKey: "AIzaSy...",\n  authDomain: "...",\n  projectId: "...",\n  ...\n}'}
-              value={configText}
-              onChange={(e) => setConfigText(e.target.value)}
-              className="w-full p-3 rounded-xl bg-slate-950 border border-white/15 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-400"
-            />
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold"
-              >
-                閉じる
-              </button>
-              <button
-                onClick={handleSave}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold"
-              >
-                保存して再読み込み
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    createRoot(document.getElementById('root')).render(<App />);
+    document.getElementById("save-config-btn").addEventListener("click", () => {
+      const text = configTextareaEl.value;
+      const keys = ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId", "measurementId"];
+      const parsed = {};
+      keys.forEach((key) => {
+        const match = text.match(new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"']+)["']`));
+        if (match) parsed[key] = match[1];
+      });
+      if (!parsed.apiKey || !parsed.projectId) {
+        showToast("apiKey と projectId を含む設定オブジェクトを入力してください", "error");
+        return;
+      }
+      localStorage.setItem("intro_quiz_firebase_config", JSON.stringify(parsed));
+      window.location.reload();
+    });
   </script>
 </body>
 </html>
