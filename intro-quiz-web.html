@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>イントロクイズ大会</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Babel for JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- YouTube IFrame Player API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <!-- ESM Import Maps -->
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "firebase/app": "https://esm.sh/firebase@10.8.0/app",
+        "firebase/auth": "https://esm.sh/firebase@10.8.0/auth",
+        "firebase/firestore": "https://esm.sh/firebase@10.8.0/firestore",
+        "lucide-react": "https://esm.sh/lucide-react@0.263.1?external=react"
+      }
+    }
+  </script>
+</head>
+<body class="bg-slate-950 text-white min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+    import { getFirestore, doc, setDoc, onSnapshot, runTransaction } from 'firebase/firestore';
+    import {
+      Music, Mic, Users, Play, Pause, RotateCcw, Bell,
+      CheckCircle2, XCircle, Eye, Volume2, LogOut, Link as LinkIcon, Settings
+    } from 'lucide-react';
+
+    // =========================================================================
+    // Firebase設定（設定済み）
+    // =========================================================================
+    const DEFAULT_FIREBASE_CONFIG = {
+      apiKey: "AIzaSyDWXDyZkXr5exbZuqwKGF5jeTCSeRGn37A",
+      authDomain: "intro-quiz-1a66b.firebaseapp.com",
+      projectId: "intro-quiz-1a66b",
+      storageBucket: "intro-quiz-1a66b.firebasestorage.app",
+      messagingSenderId: "682790470445",
+      appId: "1:682790470445:web:69a8a8ca070108c82f49a4",
+      measurementId: "G-H4YS9Z26KB"
+    };
+
+    const getFirebaseConfig = () => {
+      try {
+        const saved = localStorage.getItem('intro_quiz_firebase_config');
+        if (saved) return JSON.parse(saved);
+      } catch (e) {}
+      return DEFAULT_FIREBASE_CONFIG;
+    };
+
+    const firebaseConfig = getFirebaseConfig();
+    const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY";
+
+    let app = null;
+    let auth = null;
+    let db = null;
+    if (isFirebaseConfigured) {
+      app = initializeApp(firebaseConfig);
+      auth = getAuth(app);
+      db = getFirestore(app);
+    }
+
+    const ROOM_ID = "main-intro-room";
+
+    // =========================================================================
+    // 効果音ジェネレーター (Web Audio API)
+    // =========================================================================
+    const playSound = (type) => {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AudioCtx();
+        if (ctx.state === 'suspended') ctx.resume();
+
+        const now = ctx.currentTime;
+
+        if (type === 'buzz') {
+          // 早押し音「ピコーン！」
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(1046.5, now); // C6
+          osc.frequency.setValueAtTime(1567.98, now + 0.08); // G6
+          gain.gain.setValueAtTime(0.3, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.6);
+        } else if (type === 'correct') {
+          // 正解音「ピンポンピンポン♪」
+          const notes = [659.25, 523.25, 659.25, 523.25]; // E5, C5, E5, C5
+          notes.forEach((freq, idx) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, now + idx * 0.14);
+            gain.gain.setValueAtTime(0.25, now + idx * 0.14);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.14 + 0.35);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now + idx * 0.14);
+            osc.stop(now + idx * 0.14 + 0.35);
+          });
+        } else if (type === 'wrong') {
+          // 不正解音「ブブーッ！」
+          [0, 0.22].forEach((offset) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(130.81, now + offset); // C3
+            gain.gain.setValueAtTime(0.22, now + offset);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.18);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now + offset);
+            osc.stop(now + offset + 0.18);
+          });
+        }
+      } catch (e) {
+        console.warn("Audio playback skipped:", e);
+      }
+    };
+
+    // YouTube URLから動画IDを抽出
+    const extractYouTubeId = (url) => {
+      if (!url) return null;
+      const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+      const match = url.match(regExp);
+      return match ? match[1] : (url.length === 11 ? url : null);
+    };
+
+    const INITIAL_STATE = {
+      videoId: '',
+      isPlaying: false,
+      startTime: 0,
+      actionTimestamp: 0,
+      buzzerUser: null,
+      buzzerUserId: null,
+      wrongUsers: [],
+      revealAnswer: false,
+      soundEffect: null
+    };
+
+    function App() {
+      const [role, setRole] = useState(null); // 'host' | 'player'
+      const [playerName, setPlayerName] = useState(() => localStorage.getItem('intro_player_name') || '');
+      const [playerId] = useState(() => {
+        let id = localStorage.getItem('intro_player_id');
+        if (!id) {
+          id = 'user_' + Math.random().toString(36).substring(2, 10);
+          localStorage.setItem('intro_player_id', id);
+        }
+        return id;
+      });
+
+      const [user, setUser] = useState(null);
+      const [gameState, setGameState] = useState(INITIAL_STATE);
+      const [showConfigModal, setShowConfigModal] = useState(false);
+
+      // 効果音トリガー監視
+      const lastSoundTsRef = useRef(0);
+      useEffect(() => {
+        if (gameState.soundEffect && gameState.soundEffect.ts > lastSoundTsRef.current) {
+          lastSoundTsRef.current = gameState.soundEffect.ts;
+          playSound(gameState.soundEffect.type);
+        }
+      }, [gameState.soundEffect]);
+
+      // Firebase認証
+      useEffect(() => {
+        if (!isFirebaseConfigured) return;
+        signInAnonymously(auth).catch(console.error);
+        return onAuthStateChanged(auth, (u) => setUser(u));
+      }, []);
+
+      // 状態同期（Firebase Firestore または 同一ブラウザ用 BroadcastChannel）
+      useEffect(() => {
+        if (isFirebaseConfigured) {
+          if (!user) return;
+          const docRef = doc(db, 'intro_quiz', ROOM_ID);
+          const unsub = onSnapshot(docRef, (snap) => {
+            if (snap.exists()) {
+              setGameState({ ...INITIAL_STATE, ...snap.data() });
+            } else {
+              setDoc(docRef, INITIAL_STATE);
+            }
+          });
+          return () => unsub();
+        } else {
+          const saved = localStorage.getItem('intro_local_state');
+          if (saved) setGameState({ ...INITIAL_STATE, ...JSON.parse(saved) });
+
+          const bc = new BroadcastChannel('intro_quiz_channel');
+          bc.onmessage = (e) => {
+            if (e.data) setGameState({ ...INITIAL_STATE, ...e.data });
+          };
+          return () => bc.close();
+        }
+      }, [user]);
+
+      // 状態更新ヘルパー
+      const updateGameState = async (patch) => {
+        const nextState = { ...gameState, ...patch };
+        if (isFirebaseConfigured && db) {
+          const docRef = doc(db, 'intro_quiz', ROOM_ID);
+          await setDoc(docRef, patch, { merge: true });
+        } else {
+          setGameState(nextState);
+          localStorage.setItem('intro_local_state', JSON.stringify(nextState));
+          const bc = new BroadcastChannel('intro_quiz_channel');
+          bc.postMessage(nextState);
+          bc.close();
+        }
+      };
+
+      // 参加者の早押し処理（先着1名排他ロック + 音楽即時停止）
+      const handleBuzz = async () => {
+        if (gameState.buzzerUser || (gameState.wrongUsers || []).includes(playerId)) return;
+
+        const soundPayload = { type: 'buzz', ts: Date.now() };
+
+        if (isFirebaseConfigured && db) {
+          const docRef = doc(db, 'intro_quiz', ROOM_ID);
+          try {
+            await runTransaction(db, async (transaction) => {
+              const sfDoc = await transaction.get(docRef);
+              const data = sfDoc.exists() ? sfDoc.data() : INITIAL_STATE;
+              if (data.buzzerUser) {
+                throw "ALREADY_BUZZED";
+              }
+              transaction.set(docRef, {
+                buzzerUser: playerName,
+                buzzerUserId: playerId,
+                isPlaying: false,
+                actionTimestamp: Date.now(),
+                soundEffect: soundPayload
+              }, { merge: true });
+            });
+          } catch (e) {
+            console.log("早押し競合:", e);
+          }
+        } else {
+          if (gameState.buzzerUser) return;
+          updateGameState({
+            buzzerUser: playerName,
+            buzzerUserId: playerId,
+            isPlaying: false,
+            actionTimestamp: Date.now(),
+            soundEffect: soundPayload
+          });
+        }
+      };
+
+      if (!role) {
+        return (
+          <>
+            <EntryScreen
+              playerName={playerName}
+              setPlayerName={setPlayerName}
+              onJoinPlayer={() => {
+                localStorage.setItem('intro_player_name', playerName.trim());
+                setRole('player');
+              }}
+              onJoinHost={() => setRole('host')}
+              isFirebaseConfigured={isFirebaseConfigured}
+              onOpenConfig={() => setShowConfigModal(true)}
+            />
+            {showConfigModal && (
+              <FirebaseConfigModal onClose={() => setShowConfigModal(false)} />
+            )}
+          </>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 flex flex-col">
+          {/* ヘッダー */}
+          <header className="px-4 py-3 bg-black/40 border-b border-white/10 flex items-center justify-between sticky top-0 z-20 backdrop-blur-md">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-indigo-600 rounded-xl">
+                <Music className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="font-bold text-base sm:text-lg leading-tight">イントロクイズ</h1>
+                <span className="text-[11px] text-indigo-300">
+                  {role === 'host' ? '司会者コントロール' : `参加者: ${playerName}`}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {!isFirebaseConfigured && (
+                <button
+                  onClick={() => setShowConfigModal(true)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30"
+                >
+                  通信設定
+                </button>
+              )}
+              <button
+                onClick={() => setRole(null)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium transition"
+              >
+                <LogOut className="w-4 h-4" />
+                退出
+              </button>
+            </div>
+          </header>
+
+          {/* メイン画面 */}
+          <main className="flex-1 max-w-2xl w-full mx-auto p-4 sm:p-6 flex flex-col gap-6">
+            {role === 'host' ? (
+              <HostView gameState={gameState} updateGameState={updateGameState} />
+            ) : (
+              <PlayerView
+                gameState={gameState}
+                playerName={playerName}
+                playerId={playerId}
+                onBuzz={handleBuzz}
+              />
+            )}
+          </main>
+
+          {showConfigModal && (
+            <FirebaseConfigModal onClose={() => setShowConfigModal(false)} />
+          )}
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 入室画面（パスワード不要・ワンタップで司会者/参加者を選択）
+    // =========================================================================
+    function EntryScreen({ playerName, setPlayerName, onJoinPlayer, onJoinHost, isFirebaseConfigured, onOpenConfig }) {
+      const handlePlayerSubmit = (e) => {
+        e.preventDefault();
+        if (!playerName.trim()) return;
+        onJoinPlayer();
+      };
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white/10 backdrop-blur-xl border border-white/15 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+            <div className="text-center space-y-2">
+              <div className="w-16 h-16 bg-gradient-to-tr from-indigo-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto shadow-lg">
+                <Music className="w-9 h-9 text-white" />
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-black tracking-wide">イントロクイズ</h1>
+              <p className="text-xs sm:text-sm text-indigo-200">
+                通話しながら楽しめる早押し音楽クイズ
+              </p>
+            </div>
+
+            {/* 参加者として入室 */}
+            <form onSubmit={handlePlayerSubmit} className="bg-slate-900/60 border border-white/10 rounded-2xl p-5 space-y-4">
+              <div className="flex items-center gap-2 text-indigo-300 font-bold text-sm">
+                <Users className="w-4 h-4" />
+                <span>参加者として入る</span>
+              </div>
+              <div>
+                <input
+                  type="text"
+                  required
+                  maxLength={15}
+                  placeholder="あなたの名前（ニックネーム）"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-white/15 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!playerName.trim()}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 font-bold text-base shadow-lg transition active:scale-95 disabled:opacity-40"
+              >
+                クイズに参加する
+              </button>
+            </form>
+
+            <div className="relative flex items-center justify-center">
+              <div className="w-full border-t border-white/10"></div>
+              <span className="px-3 text-xs text-slate-400 bg-transparent">または</span>
+              <div className="w-full border-t border-white/10"></div>
+            </div>
+
+            {/* 司会者として入室（パスワードなし） */}
+            <button
+              onClick={onJoinHost}
+              className="w-full py-3.5 px-4 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 flex items-center justify-center gap-2.5 font-bold text-slate-100 transition active:scale-95"
+            >
+              <Mic className="w-5 h-5 text-pink-400" />
+              <span>司会者として入る（出題する）</span>
+            </button>
+
+            {/* 通信ステータス表示 */}
+            <div className="pt-2 text-center">
+              <button
+                onClick={onOpenConfig}
+                className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white transition"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                {isFirebaseConfigured
+                  ? "🟢 オンライン同期（Firebase接続済み）"
+                  : "🟡 ローカルモード（別端末と同期するにはFirebase設定）"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 司会者画面
+    // =========================================================================
+    function HostView({ gameState, updateGameState }) {
+      const [urlInput, setUrlInput] = useState('');
+      const [ytReady, setYtReady] = useState(false);
+      const playerRef = useRef(null);
+
+      // YouTube Player 初期化
+      useEffect(() => {
+        const initPlayer = () => {
+          if (playerRef.current) return;
+          playerRef.current = new window.YT.Player('host-yt-player', {
+            height: '200',
+            width: '100%',
+            videoId: gameState.videoId || '',
+            playerVars: { playsinline: 1, controls: 1, rel: 0 },
+            events: {
+              onReady: () => setYtReady(true)
+            }
+          });
+        };
+
+        if (window.YT && window.YT.Player) {
+          initPlayer();
+        } else {
+          window.onYouTubeIframeAPIReady = initPlayer;
+        }
+      }, []);
+
+      // 動画ID変更反映
+      useEffect(() => {
+        if (ytReady && playerRef.current && gameState.videoId) {
+          const currentUrl = playerRef.current.getVideoUrl?.() || '';
+          if (!currentUrl.includes(gameState.videoId)) {
+            playerRef.current.cueVideoById(gameState.videoId);
+          }
+        }
+      }, [gameState.videoId, ytReady]);
+
+      // 再生・停止状態反映（参加者が早押しした時も司会者側を止める）
+      useEffect(() => {
+        if (!ytReady || !playerRef.current) return;
+        if (gameState.isPlaying) {
+          playerRef.current.playVideo?.();
+        } else {
+          playerRef.current.pauseVideo?.();
+        }
+      }, [gameState.isPlaying, gameState.actionTimestamp, ytReady]);
+
+      // URLセット
+      const handleLoadVideo = (e) => {
+        e.preventDefault();
+        const id = extractYouTubeId(urlInput.trim());
+        if (!id) {
+          alert('有効なYouTubeのURLを入力してください');
+          return;
+        }
+        if (ytReady && playerRef.current) {
+          playerRef.current.cueVideoById(id);
+        }
+        updateGameState({
+          videoId: id,
+          isPlaying: false,
+          startTime: 0,
+          actionTimestamp: Date.now(),
+          buzzerUser: null,
+          buzzerUserId: null,
+          wrongUsers: [],
+          revealAnswer: false
+        });
+        setUrlInput('');
+      };
+
+      const handlePlay = () => {
+        if (!gameState.videoId) return;
+        const currentSec = playerRef.current?.getCurrentTime?.() || 0;
+        updateGameState({
+          isPlaying: true,
+          startTime: currentSec,
+          actionTimestamp: Date.now(),
+          buzzerUser: null,
+          buzzerUserId: null
+        });
+      };
+
+      const handlePause = () => {
+        const currentSec = playerRef.current?.getCurrentTime?.() || 0;
+        updateGameState({
+          isPlaying: false,
+          startTime: currentSec,
+          actionTimestamp: Date.now()
+        });
+      };
+
+      const handleRestartFromZero = () => {
+        if (!gameState.videoId) return;
+        playerRef.current?.seekTo?.(0, true);
+        updateGameState({
+          isPlaying: true,
+          startTime: 0,
+          actionTimestamp: Date.now(),
+          buzzerUser: null,
+          buzzerUserId: null
+        });
+      };
+
+      // 正解処理
+      const handleCorrect = () => {
+        updateGameState({
+          isPlaying: true,
+          revealAnswer: true,
+          buzzerUser: null,
+          buzzerUserId: null,
+          actionTimestamp: Date.now(),
+          soundEffect: { type: 'correct', ts: Date.now() }
+        });
+      };
+
+      // 不正解処理（回答者をロックして曲を再開できるようにする）
+      const handleWrong = () => {
+        const nextWrong = gameState.buzzerUserId
+          ? [...new Set([...(gameState.wrongUsers || []), gameState.buzzerUserId])]
+          : (gameState.wrongUsers || []);
+
+        updateGameState({
+          buzzerUser: null,
+          buzzerUserId: null,
+          wrongUsers: nextWrong,
+          isPlaying: false,
+          actionTimestamp: Date.now(),
+          soundEffect: { type: 'wrong', ts: Date.now() }
+        });
+      };
+
+      return (
+        <div className="space-y-5">
+          {/* 1. YouTube URL 入力 */}
+          <form onSubmit={handleLoadVideo} className="bg-white/10 border border-white/15 rounded-2xl p-4 space-y-3">
+            <label className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+              <LinkIcon className="w-4 h-4" />
+              出題するYouTubeのURLを貼り付け
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="https://www.youtube.com/watch?v=..."
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/15 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-pink-400"
+              />
+              <button
+                type="submit"
+                className="px-4 py-2.5 rounded-xl bg-pink-600 hover:bg-pink-500 font-bold text-sm shrink-0 transition"
+              >
+                セット
+              </button>
+            </div>
+          </form>
+
+          {/* 2. 回答者アラート（誰かが押した時） */}
+          {gameState.buzzerUser && (
+            <div className="bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 rounded-2xl p-5 shadow-xl animate-pulse space-y-4">
+              <div className="text-center">
+                <span className="text-xs font-black uppercase tracking-widest bg-black/20 text-white px-3 py-1 rounded-full">
+                  回答権獲得！
+                </span>
+                <div className="text-3xl sm:text-4xl font-black mt-2 text-white drop-shadow">
+                  🎤 {gameState.buzzerUser} さん
+                </div>
+                <p className="text-xs font-bold text-amber-100 mt-1">
+                  通話で口頭回答を聞いて判定してください
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={handleCorrect}
+                  className="py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-base flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  正解！（答え公開）
+                </button>
+                <button
+                  onClick={handleWrong}
+                  className="py-3.5 rounded-xl bg-rose-700 hover:bg-rose-600 text-white font-black text-base flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
+                >
+                  <XCircle className="w-5 h-5" />
+                  不正解（続行）
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 3. 再生コントロール */}
+          <div className="bg-white/10 border border-white/15 rounded-2xl p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-300">音楽コントロール（参加者と同期）</span>
+              <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${gameState.isPlaying ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-700 text-slate-300'}`}>
+                {gameState.isPlaying ? '▶ 再生中' : '⏸ 停止中'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2.5">
+              <button
+                onClick={handlePlay}
+                disabled={!gameState.videoId}
+                className="py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 font-bold flex flex-col items-center justify-center gap-1 transition active:scale-95"
+              >
+                <Play className="w-6 h-6 fill-current" />
+                <span className="text-xs">再生</span>
+              </button>
+
+              <button
+                onClick={handlePause}
+                disabled={!gameState.videoId}
+                className="py-3.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 font-bold flex flex-col items-center justify-center gap-1 transition active:scale-95"
+              >
+                <Pause className="w-6 h-6 fill-current" />
+                <span className="text-xs">ストップ</span>
+              </button>
+
+              <button
+                onClick={handleRestartFromZero}
+                disabled={!gameState.videoId}
+                className="py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 font-bold flex flex-col items-center justify-center gap-1 transition active:scale-95"
+              >
+                <RotateCcw className="w-6 h-6" />
+                <span className="text-xs">最初から再生</span>
+              </button>
+            </div>
+
+            {/* 答え公開・お手つきリセット */}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => updateGameState({ revealAnswer: !gameState.revealAnswer })}
+                disabled={!gameState.videoId}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-40 text-xs font-bold flex items-center justify-center gap-1.5 transition"
+              >
+                <Eye className="w-4 h-4 text-pink-400" />
+                {gameState.revealAnswer ? '答えを隠す' : '答え（動画）を全員に表示'}
+              </button>
+
+              {(gameState.wrongUsers || []).length > 0 && (
+                <button
+                  onClick={() => updateGameState({ wrongUsers: [] })}
+                  className="py-2.5 px-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-bold"
+                >
+                  お手つき解除 ({gameState.wrongUsers.length})
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 4. 司会者用プレビュー */}
+          <div className="bg-black/40 border border-white/10 rounded-2xl p-3 space-y-2">
+            <span className="text-[11px] text-slate-400 block">
+              司会者用モニター（参加者には答え公開まで映像は見えません）
+            </span>
+            <div className="rounded-xl overflow-hidden bg-black aspect-video">
+              <div id="host-yt-player"></div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 参加者画面（音だけ聞こえる + 早押しボタン）
+    // =========================================================================
+    function PlayerView({ gameState, playerName, playerId, onBuzz }) {
+      const [audioUnlocked, setAudioUnlocked] = useState(false);
+      const [ytReady, setYtReady] = useState(false);
+      const playerRef = useRef(null);
+
+      // 参加者用 YouTube Player 初期化
+      useEffect(() => {
+        const initPlayer = () => {
+          if (playerRef.current) return;
+          playerRef.current = new window.YT.Player('player-yt-hidden', {
+            height: '200',
+            width: '100%',
+            videoId: gameState.videoId || '',
+            playerVars: {
+              playsinline: 1,
+              controls: 0,
+              disablekb: 1,
+              modestbranding: 1,
+              rel: 0
+            },
+            events: {
+              onReady: () => setYtReady(true)
+            }
+          });
+        };
+
+        if (window.YT && window.YT.Player) {
+          initPlayer();
+        } else {
+          window.onYouTubeIframeAPIReady = initPlayer;
+        }
+      }, []);
+
+      // 動画ID・再生状態・シーク位置の完全同期
+      useEffect(() => {
+        if (!ytReady || !playerRef.current) return;
+
+        if (!gameState.videoId) {
+          playerRef.current.stopVideo?.();
+          return;
+        }
+
+        const currentUrl = playerRef.current.getVideoUrl?.() || '';
+        if (!currentUrl.includes(gameState.videoId)) {
+          playerRef.current.loadVideoById({
+            videoId: gameState.videoId,
+            startSeconds: gameState.startTime || 0
+          });
+          if (!gameState.isPlaying) {
+            setTimeout(() => playerRef.current?.pauseVideo?.(), 300);
+          }
+          return;
+        }
+
+        if (gameState.isPlaying) {
+          if (typeof gameState.startTime === 'number') {
+            const diff = Math.abs((playerRef.current.getCurrentTime?.() || 0) - gameState.startTime);
+            if (diff > 1.5) {
+              playerRef.current.seekTo?.(gameState.startTime, true);
+            }
+          }
+          playerRef.current.playVideo?.();
+        } else {
+          playerRef.current.pauseVideo?.();
+        }
+      }, [gameState.videoId, gameState.isPlaying, gameState.actionTimestamp, ytReady]);
+
+      // スマホの自動再生ブロック解除
+      const unlockAudio = () => {
+        playSound('buzz');
+        if (ytReady && playerRef.current) {
+          playerRef.current.unMute?.();
+          playerRef.current.setVolume?.(100);
+          if (gameState.isPlaying && gameState.videoId) {
+            playerRef.current.playVideo?.();
+          }
+        }
+        setAudioUnlocked(true);
+      };
+
+      const isWrongUser = (gameState.wrongUsers || []).includes(playerId);
+      const isSomeoneBuzzing = Boolean(gameState.buzzerUser);
+      const isMeBuzzing = gameState.buzzerUserId === playerId;
+      const canBuzz = !isSomeoneBuzzing && !isWrongUser && Boolean(gameState.videoId);
+
+      return (
+        <div className="flex-1 flex flex-col justify-between gap-6">
+          {/* 音声有効化バナー（スマホ対策） */}
+          {!audioUnlocked && (
+            <button
+              onClick={unlockAudio}
+              className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black shadow-lg flex items-center justify-center gap-3 animate-bounce"
+            >
+              <Volume2 className="w-6 h-6" />
+              <span>タップして音声を有効にする（必須）</span>
+            </button>
+          )}
+
+          {/* ステータス表示エリア */}
+          <div className="bg-white/10 border border-white/15 rounded-3xl p-6 text-center space-y-3">
+            {isSomeoneBuzzing ? (
+              <div className="space-y-2 py-2">
+                <span className="inline-block px-3 py-1 rounded-full bg-amber-500 text-slate-950 font-black text-xs">
+                  回答中！
+                </span>
+                <div className="text-3xl sm:text-4xl font-black text-amber-300">
+                  {isMeBuzzing ? "あなたの回答権です！" : `${gameState.buzzerUser} さんが回答中！`}
+                </div>
+                <p className="text-xs text-slate-300">
+                  {isMeBuzzing ? "通話で曲名を答えてください！" : "回答が終わるまでお待ちください"}
+                </p>
+              </div>
+            ) : !gameState.videoId ? (
+              <div className="py-4 space-y-1">
+                <p className="text-lg font-bold text-slate-200">司会者の出題待ち...</p>
+                <p className="text-xs text-slate-400">曲がセットされるまでそのままお待ちください</p>
+              </div>
+            ) : gameState.isPlaying ? (
+              <div className="py-3 space-y-2">
+                <div className="flex items-center justify-center gap-1.5 text-emerald-400 font-black text-lg">
+                  <Volume2 className="w-6 h-6 animate-pulse" />
+                  <span>問題再生中！よく聴いて！</span>
+                </div>
+                <p className="text-xs text-slate-300">わかったら下の早押しボタンをタップ！</p>
+              </div>
+            ) : (
+              <div className="py-4 space-y-1">
+                <p className="text-lg font-bold text-indigo-200">スタンバイ中</p>
+                <p className="text-xs text-slate-400">司会者が再生するまでお待ちください</p>
+              </div>
+            )}
+          </div>
+
+          {/* 巨大早押しボタン */}
+          <div className="flex-1 flex items-center justify-center py-2">
+            <button
+              onClick={onBuzz}
+              disabled={!canBuzz}
+              className={`w-64 h-64 sm:w-72 sm:h-72 rounded-full font-black text-2xl sm:text-3xl tracking-wider flex flex-col items-center justify-center gap-2 transition-all select-none ${
+                isMeBuzzing
+                  ? 'bg-amber-500 text-slate-950 ring-8 ring-amber-300/50 scale-105'
+                  : isWrongUser
+                  ? 'bg-slate-800 text-slate-500 border-4 border-slate-700 cursor-not-allowed'
+                  : isSomeoneBuzzing
+                  ? 'bg-slate-800/80 text-slate-500 border-4 border-slate-700 cursor-not-allowed'
+                  : !gameState.videoId
+                  ? 'bg-slate-800/60 text-slate-500 border-4 border-slate-700 cursor-not-allowed'
+                  : 'bg-gradient-to-b from-rose-500 to-red-700 hover:from-rose-400 hover:to-red-600 text-white shadow-[0_12px_0_rgb(136,19,55),0_20px_40px_rgba(225,29,72,0.5)] active:translate-y-2 active:shadow-[0_4px_0_rgb(136,19,55)] cursor-pointer'
+              }`}
+            >
+              <Bell className="w-12 h-12" />
+              <span>
+                {isMeBuzzing
+                  ? '回答中！'
+                  : isWrongUser
+                  ? '回答済み'
+                  : isSomeoneBuzzing
+                  ? 'ロック中'
+                  : 'わかった！'}
+              </span>
+            </button>
+          </div>
+
+          {/* ネタバレ防止 YouTube プレーヤー（答え公開時のみ表示） */}
+          <div className={gameState.revealAnswer ? 'bg-white/10 border border-white/15 rounded-2xl p-3 space-y-2' : 'fixed -left-[9999px] w-px h-px opacity-0 pointer-events-none overflow-hidden'}>
+            {gameState.revealAnswer && (
+              <div className="text-center text-sm font-black text-amber-300">
+                🎵 正解の曲はこちら！
+              </div>
+            )}
+            <div className="rounded-xl overflow-hidden bg-black aspect-video">
+              <div id="player-yt-hidden"></div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // Firebase設定モーダル（コードを書き換えずにブラウザから設定可能）
+    // =========================================================================
+    function FirebaseConfigModal({ onClose }) {
+      const [configText, setConfigText] = useState('');
+
+      const handleSave = () => {
+        try {
+          const jsonMatch = configText.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) throw new Error();
+          const parsed = Function('"use strict";return (' + jsonMatch[0] + ')')();
+          if (!parsed.apiKey || !parsed.projectId) throw new Error();
+          localStorage.setItem('intro_quiz_firebase_config', JSON.stringify(parsed));
+          window.location.reload();
+        } catch (e) {
+          alert('Firebaseの設定オブジェクト（{ apiKey: "...", ... }）を正しく貼り付けてください。');
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-white/15 rounded-2xl max-w-md w-full p-6 space-y-4">
+            <h2 className="text-lg font-bold">オンライン同期（Firebase）設定</h2>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              別のスマホ・PC同士でリアルタイム通信を行うには、Firebaseの「firebaseConfig」を貼り付けて保存してください。
+            </p>
+            <textarea
+              rows={6}
+              placeholder={'{\n  apiKey: "AIzaSy...",\n  authDomain: "...",\n  projectId: "...",\n  ...\n}'}
+              value={configText}
+              onChange={(e) => setConfigText(e.target.value)}
+              className="w-full p-3 rounded-xl bg-slate-950 border border-white/15 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-400"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold"
+              >
+                閉じる
+              </button>
+              <button
+                onClick={handleSave}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold"
+              >
+                保存して再読み込み
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
